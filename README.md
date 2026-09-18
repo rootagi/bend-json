@@ -39,7 +39,18 @@ A production-grade, reusable JSON library for **Bend 2** featuring formal invari
 
 ## Installation & Import
 
-Place `json.bend` into your project directory and import it:
+### Option 1: Direct from Bend Hub (Recommended)
+
+Import directly by content hash without copying any files:
+
+```bend
+import Base
+import 0x6bcc5639f884b922a3ea766a6acc017c/json.bend as Json
+```
+
+### Option 2: Local File Import
+
+Alternatively, place `json.bend` into your project directory and import it locally:
 
 ```bend
 import Base
