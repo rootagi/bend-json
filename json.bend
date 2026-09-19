@@ -1023,15 +1023,40 @@ def escape_char(+c: Char) -> String:
                       String.from_list([{Chr{92}:Char}, {Chr{117}:Char}, {Chr{48}:Char}, {Chr{48}:Char}, hex_to_char(U32.div(code, 16)), hex_to_char(U32.mod(code, 16))]),
                       Char.show(Chr{code})))))))))
 
-def escape_string(s: String) -> String:
-  match s:
-    case SNil{}:
-      ""
-    case SCon{c, t}:
-      escape_char(c) ++ escape_string(t)
+def escape_char_acc(+c: Char, +acc: List<&2, Char>) -> List<&2, Char>:
+  match c:
+    case Chr{+code}:
+      Bool.pick(List<&2, Char>, U32.is_eq(code, 34), {Chr{34}:Char} <> {Chr{92}:Char} <> acc,
+        Bool.pick(List<&2, Char>, U32.is_eq(code, 92), {Chr{92}:Char} <> {Chr{92}:Char} <> acc,
+          Bool.pick(List<&2, Char>, U32.is_eq(code, 8), {Chr{98}:Char} <> {Chr{92}:Char} <> acc,
+            Bool.pick(List<&2, Char>, U32.is_eq(code, 12), {Chr{102}:Char} <> {Chr{92}:Char} <> acc,
+              Bool.pick(List<&2, Char>, U32.is_eq(code, 10), {Chr{110}:Char} <> {Chr{92}:Char} <> acc,
+                Bool.pick(List<&2, Char>, U32.is_eq(code, 13), {Chr{114}:Char} <> {Chr{92}:Char} <> acc,
+                  Bool.pick(List<&2, Char>, U32.is_eq(code, 9), {Chr{116}:Char} <> {Chr{92}:Char} <> acc,
+                    Bool.pick(List<&2, Char>, U32.is_lt(code, 32),
+                      hex_to_char(U32.mod(code, 16)) <> hex_to_char(U32.div(code, 16)) <> {Chr{48}:Char} <> {Chr{48}:Char} <> {Chr{117}:Char} <> {Chr{92}:Char} <> acc,
+                      Chr{code} <> acc))))))))
 
-def quote_string(s: String) -> String:
-  "\"" ++ escape_string(s) ++ "\""
+def escape_str_loop(fuel: Nat, s: String, +acc: List<&2, Char>) -> String:
+  match fuel:
+    case 0n:
+      String.from_list(List.reverse(&2, Char, acc))
+    case 1n++p:
+      match s:
+        case SNil{}:
+          String.from_list(List.reverse(&2, Char, acc))
+        case SCon{c, t}:
+          escape_str_loop(p, t, escape_char_acc(c, acc))
+
+def escape_string(+s: String) -> String:
+  +len = String.length(s)
+  +fuel = Nat.add(len, 10n)
+  escape_str_loop(fuel, s, Nil{})
+
+def quote_string(+s: String) -> String:
+  +len = String.length(s)
+  +fuel = Nat.add(len, 10n)
+  "\"" ++ escape_str_loop(fuel, s, Nil{}) ++ "\""
 
 def json_size_loop(fuel: Nat, +tasks: List<&2, SizeTask>, +acc: Nat) -> Nat:
   match fuel:
@@ -1077,69 +1102,80 @@ def json_size_loop(fuel: Nat, +tasks: List<&2, SizeTask>, +acc: Nat) -> Nat:
 def json_size(j: Json) -> Nat:
   json_size_loop(4294967295n, [SzVal{j}], 0n)
 
-def stringify_loop(fuel: Nat, +tasks: List<&2, PrintTask>, acc: String) -> Result<&2, &2, String, String>:
+def join_chunks_loop(fuel: Nat, xs: List<&2, String>, cur: String) -> String:
+  match fuel:
+    case 0n:
+      cur
+    case 1n++p:
+      match xs:
+        case Nil{}:
+          cur
+        case h <> t:
+          join_chunks_loop(p, t, h ++ cur)
+
+def stringify_loop(fuel: Nat, +tasks: List<&2, PrintTask>, +acc: List<&2, String>) -> Result<&2, &2, String, String>:
   match fuel:
     case 0n:
       match tasks:
         case Nil{}:
-          Done{acc}
+          Done{join_chunks_loop(4294967295n, acc, "")}
         case _:
           Fail{"fuel exhausted in stringify"}
     case 1n++p:
       match tasks:
         case Nil{}:
-          Done{acc}
+          Done{join_chunks_loop(4294967295n, acc, "")}
         case h <> t:
           match h:
             case PLit{s}:
-              stringify_loop(p, t, acc ++ s)
+              stringify_loop(p, t, s <> acc)
             case PVal{j}:
               match j:
                 case JNull{}:
-                  stringify_loop(p, t, acc ++ "null")
+                  stringify_loop(p, t, "null" <> acc)
                 case JBool{b}:
                   match b:
                     case True{}:
-                      stringify_loop(p, t, acc ++ "true")
+                      stringify_loop(p, t, "true" <> acc)
                     case False{}:
-                      stringify_loop(p, t, acc ++ "false")
+                      stringify_loop(p, t, "false" <> acc)
                 case JNum{n}:
-                  stringify_loop(p, t, acc ++ Nat.show(n))
+                  stringify_loop(p, t, Nat.show(n) <> acc)
                 case JNeg{n}:
-                  stringify_loop(p, t, acc ++ "-" ++ Nat.show(n))
+                  stringify_loop(p, t, Nat.show(n) <> "-" <> acc)
                 case JStr{s}:
-                  stringify_loop(p, t, acc ++ quote_string(s))
+                  stringify_loop(p, t, quote_string(s) <> acc)
                 case JArr{vals}:
                   match vals:
                     case Nil{}:
-                      stringify_loop(p, t, acc ++ "[]")
+                      stringify_loop(p, t, "[]" <> acc)
                     case vh <> vt:
-                      stringify_loop(p, PVal{vh} <> PArr{vt} <> PLit{"]"} <> t, acc ++ "[")
+                      stringify_loop(p, PVal{vh} <> PArr{vt} <> PLit{"]"} <> t, "[" <> acc)
                 case JObj{kvs}:
                   match kvs:
                     case Nil{}:
-                      stringify_loop(p, t, acc ++ "{}")
+                      stringify_loop(p, t, "{}" <> acc)
                     case Tuple{k, v} <> kt:
-                      stringify_loop(p, PVal{v} <> PObj{kt} <> PLit{"}"} <> t, acc ++ "{" ++ quote_string(k) ++ ":")
+                      stringify_loop(p, PVal{v} <> PObj{kt} <> PLit{"}"} <> t, ":" <> quote_string(k) <> "{" <> acc)
                 case JRaw{s}:
-                  stringify_loop(p, t, acc ++ s)
+                  stringify_loop(p, t, s <> acc)
             case PArr{items}:
               match items:
                 case Nil{}:
                   stringify_loop(p, t, acc)
                 case vh <> vt:
-                  stringify_loop(p, PVal{vh} <> PArr{vt} <> t, acc ++ ",")
+                  stringify_loop(p, PVal{vh} <> PArr{vt} <> t, "," <> acc)
             case PObj{kvs}:
               match kvs:
                 case Nil{}:
                   stringify_loop(p, t, acc)
                 case Tuple{k, v} <> kt:
-                  stringify_loop(p, PVal{v} <> PObj{kt} <> t, acc ++ "," ++ quote_string(k) ++ ":")
+                  stringify_loop(p, PVal{v} <> PObj{kt} <> t, ":" <> quote_string(k) <> "," <> acc)
 
 def stringify_checked(+j: Json) -> Result<&2, &2, String, String>:
   +size = json_size(j)
   +fuel = Nat.add(Nat.mul(size, 4n), 16n)
-  stringify_loop(fuel, [PVal{j}], "")
+  stringify_loop(fuel, [PVal{j}], Nil{})
 
 def stringify_unwrap(r: Result<&2, &2, String, String>) -> String:
   match r:
@@ -1169,67 +1205,67 @@ def make_custom_indent(count: Nat, +step_str: String) -> String:
     case 1n+cp:
       step_str ++ make_custom_indent(cp, step_str)
 
-def pretty_indent_loop(fuel: Nat, +tasks: List<&2, PrettyTask>, +step_str: String, acc: String) -> String:
+def pretty_indent_loop(fuel: Nat, +tasks: List<&2, PrettyTask>, +step_str: String, +acc: List<&2, String>) -> String:
   match fuel:
     case 0n:
-      acc
+      join_chunks_loop(4294967295n, acc, "")
     case 1n++p:
       match tasks:
         case Nil{}:
-          acc
+          join_chunks_loop(4294967295n, acc, "")
         case h <> t:
           match h:
             case PrLit{s}:
-              pretty_indent_loop(p, t, step_str, acc ++ s)
+              pretty_indent_loop(p, t, step_str, s <> acc)
             case PrVal{j, +ind}:
               match j:
                 case JNull{}:
-                  pretty_indent_loop(p, t, step_str, acc ++ "null")
+                  pretty_indent_loop(p, t, step_str, "null" <> acc)
                 case JBool{b}:
                   match b:
                     case True{}:
-                      pretty_indent_loop(p, t, step_str, acc ++ "true")
+                      pretty_indent_loop(p, t, step_str, "true" <> acc)
                     case False{}:
-                      pretty_indent_loop(p, t, step_str, acc ++ "false")
+                      pretty_indent_loop(p, t, step_str, "false" <> acc)
                 case JNum{n}:
-                  pretty_indent_loop(p, t, step_str, acc ++ Nat.show(n))
+                  pretty_indent_loop(p, t, step_str, Nat.show(n) <> acc)
                 case JNeg{n}:
-                  pretty_indent_loop(p, t, step_str, acc ++ "-" ++ Nat.show(n))
+                  pretty_indent_loop(p, t, step_str, Nat.show(n) <> "-" <> acc)
                 case JStr{s}:
-                  pretty_indent_loop(p, t, step_str, acc ++ quote_string(s))
+                  pretty_indent_loop(p, t, step_str, quote_string(s) <> acc)
                 case JArr{vals}:
                   match vals:
                     case Nil{}:
-                      pretty_indent_loop(p, t, step_str, acc ++ "[]")
+                      pretty_indent_loop(p, t, step_str, "[]" <> acc)
                     case vh <> vt:
                       +next_ind = {ind ++ step_str : String}
-                      pretty_indent_loop(p, PrVal{vh, next_ind} <> PrArr{vt, next_ind} <> PrLit{"\n" ++ ind ++ "]"} <> t, step_str, acc ++ "[\n" ++ next_ind)
+                      pretty_indent_loop(p, PrVal{vh, next_ind} <> PrArr{vt, next_ind} <> PrLit{"\n" ++ ind ++ "]"} <> t, step_str, ("[\n" ++ next_ind) <> acc)
                 case JObj{kvs}:
                   match kvs:
                     case Nil{}:
-                      pretty_indent_loop(p, t, step_str, acc ++ "{}")
+                      pretty_indent_loop(p, t, step_str, "{}" <> acc)
                     case Tuple{k, v} <> kt:
                       +next_ind = {ind ++ step_str : String}
-                      pretty_indent_loop(p, PrVal{v, next_ind} <> PrObj{kt, next_ind} <> PrLit{"\n" ++ ind ++ "}"} <> t, step_str, acc ++ "{\n" ++ next_ind ++ quote_string(k) ++ ": ")
+                      pretty_indent_loop(p, PrVal{v, next_ind} <> PrObj{kt, next_ind} <> PrLit{"\n" ++ ind ++ "}"} <> t, step_str, (": ") <> quote_string(k) <> ("{\n" ++ next_ind) <> acc)
                 case JRaw{s}:
-                  pretty_indent_loop(p, t, step_str, acc ++ s)
+                  pretty_indent_loop(p, t, step_str, s <> acc)
             case PrArr{items, +ind}:
               match items:
                 case Nil{}:
                   pretty_indent_loop(p, t, step_str, acc)
                 case vh <> vt:
-                  pretty_indent_loop(p, PrVal{vh, ind} <> PrArr{vt, ind} <> t, step_str, acc ++ ",\n" ++ ind)
+                  pretty_indent_loop(p, PrVal{vh, ind} <> PrArr{vt, ind} <> t, step_str, (",\n" ++ ind) <> acc)
             case PrObj{kvs, +ind}:
               match kvs:
                 case Nil{}:
                   pretty_indent_loop(p, t, step_str, acc)
                 case Tuple{k, v} <> kt:
-                  pretty_indent_loop(p, PrVal{v, ind} <> PrObj{kt, ind} <> t, step_str, acc ++ ",\n" ++ ind ++ quote_string(k) ++ ": ")
+                  pretty_indent_loop(p, PrVal{v, ind} <> PrObj{kt, ind} <> t, step_str, (": ") <> quote_string(k) <> (",\n" ++ ind) <> acc)
 
 def pretty_indent(+j: Json, step: Nat) -> String:
   +size = json_size(j)
   +fuel = Nat.add(Nat.mul(size, 4n), 16n)
-  pretty_indent_loop(fuel, [PrVal{j, ""}], make_spaces(step), "")
+  pretty_indent_loop(fuel, [PrVal{j, ""}], make_spaces(step), Nil{})
 
 def pretty(j: Json) -> String:
   pretty_indent(j, 2n)

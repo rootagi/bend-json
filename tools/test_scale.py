@@ -17,17 +17,12 @@ def test_scale():
         s = '"' + "a" * size + '"'
         cmd = f"""cat << 'EOF' > /tmp/str_{size}.json\n{s}\nEOF\ncd /root/bend && /usr/bin/time -f '%e' bend tests/harness.bend < /dev/null 2>&1"""
         # Actually harness needs JSON_IN
-        cmd = f"""cat << 'EOF' > /tmp/str_{size}.json\n{s}\nEOF\ncd /root/bend && JSON_IN=/tmp/str_{size}.json /usr/bin/time -f '%e' bend tests/harness.bend 2>&1"""
+        cmd = f"""cat << 'EOF' > /tmp/str_{size}.json\n{s}\nEOF\ncd /root/bend && JSON_IN=/tmp/str_{size}.json bend tests/harness.bend 2>&1"""
         t0 = time.time()
         res = run_ssh(cmd, timeout=180)
         elapsed = time.time() - t0
-        # Parse output
         lines = res.stdout.strip().splitlines()
-        last_line = lines[-1] if lines else "N/A"
-        try:
-            time_val = float(last_line)
-        except ValueError:
-            time_val = elapsed
+        time_val = elapsed
         str_times[size] = time_val
         print(f"  String {size}: {time_val:.2f}s (output: {lines[0] if lines else 'NONE'})")
     
@@ -44,7 +39,7 @@ def test_scale():
         cmd = f"""python3 -c '
 with open("/tmp/arr_{size}.json", "w") as f:
     f.write("[" + ",".join(["1"] * {size}) + "]")
-' && cd /root/bend && JSON_IN=/tmp/arr_{size}.json /usr/bin/time -f '%e' bend tests/harness.bend 2>&1"""
+' && cd /root/bend && JSON_IN=/tmp/arr_{size}.json bend tests/harness.bend 2>&1"""
         t0 = time.time()
         res = run_ssh(cmd, timeout=180)
         elapsed = time.time() - t0
