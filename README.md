@@ -1,20 +1,21 @@
 # bend-json
 
-A  reusable JSON library for **Bend 2** featuring formal invariant verification, RFC 6901 JSON Pointer navigation, array combinators, typed extractors, configurable indentation, and streaming NDJSON.
+A reusable JSON library for **Bend 2** featuring machine-checked example laws, RFC 6901 JSON Pointer navigation, array combinators, typed extractors, configurable indentation, and streaming NDJSON.
 
 > **Note on Verification & AI Development:**  
 > This library was primarily developed with AI assistance (using advanced language models), following Bend’s intended workflow of AI-generated code verified by formal proofs.  
-> All critical properties are stated in LAWS.bend and mechanically checked in PROOF.bend.
+> The laws in `LAWS.bend` are concrete example cases, mechanically checked by `bend PROOF.bend`.  
+> An independent test suite (`tests/run_tests.py`) additionally compares the library against Python's `json` module.
 
 ---
 
 ## Key Features
 
-- **Full JSON AST**: Supports `null`, booleans (`true`/`false`), arbitrary non-negative integers (`Nat`), negative integers (`-Nat`), strings with complete escape sequences (`"`, `\`, `\n`, `\t`, `\r`), heterogeneous arrays, and key-value objects.
-- **Formally Verified Correctness**: 47 formal laws in `LAWS.bend` mechanically proven in `PROOF.bend`. 100% check rate with `bend PROOF.bend`.
+- **JSON AST**: Supports `null`, booleans (`true`/`false`), non-negative integers (`Nat`) and negative integers (`-Nat`) up to 2^48 - 1 in magnitude, decimal and exponent numbers (kept verbatim as `JRaw`), strings with all RFC 8259 escapes (including `\uXXXX` and surrogate pairs), heterogeneous arrays, and key-value objects. Integers of 2^48 or more are rejected with `Fail{"number too large"}`.
+- **Machine-Checked Examples**: 56 formal laws in `LAWS.bend`, each stating one concrete example, all checked by `bend PROOF.bend`.
 - **RFC 6901 JSON Pointer**:
   - `pointer(j, ptr)`: Deep querying supporting standard escaping (`~1` for `/`, `~0` for `~`) and array indexing.
-  - `pointer_set(j, ptr, val)`: Deep in-place mutation along any pointer path.
+  - `pointer_set(j, ptr, val)`: Returns the document with the value at the pointer path replaced.
 - **Rich Object Dictionary APIs**:
   - `get`, `has`, `set`, `remove`, `obj_len`, `keys`, `values`, `entries`.
   - `merge(base, overrides)`: Object merging with override semantics.
@@ -26,14 +27,14 @@ A  reusable JSON library for **Bend 2** featuring formal invariant verification,
   - Type-safe extractors: `get_str`, `get_num`, `get_neg`, `get_bool`, `get_arr`, `get_obj`.
   - Safe fallbacks: `get_str_or`, `get_num_or`, `get_bool_or`.
 - **Configurable Pretty Printing**:
-  - `stringify(j)`: High-performance compact minifier.
+  - `stringify(j)`: Compact serializer.
   - `pretty(j)`: Standard 2-space indented formatter.
   - `pretty_indent(j, step)`: Custom indentation width (e.g. 4 spaces).
-- **Fast Validation & Streaming NDJSON**:
-  - `validate(s) -> Bool`: Syntactic validation without allocating intermediate AST.
+- **Validation & Streaming NDJSON**:
+  - `validate(s) -> Bool`: Returns whether `s` is valid JSON (implemented by running `parse`).
   - `stringify_ndjson` and `parse_ndjson`: Line-delimited JSON stream processing.
-- **Linear State Machine Architecture**:
-  - String parsing, line splitting, and pointer tokenization use explicit linear state machines, guaranteeing $O(N)$ execution and eliminating deep recursion stack issues.
+- **State-Machine Parsing**:
+  - String parsing, line splitting, and pointer tokenization use explicit state machines instead of deep recursion. Tested with 20,000 levels of nesting (compact output) and 200,000-character strings. Very large inputs (hundreds of thousands of array elements) are slow.
 
 ---
 
@@ -151,14 +152,15 @@ Runnable example programs are located in the `examples/` directory:
 ### Abstract Syntax Tree (AST)
 
 ```bend
-type Json:
-  case JNull{}
-  case JBool{val: Bool}
-  case JNum{val: Nat}
-  case JNeg{val: Nat}
-  case JStr{val: String}
-  case JArr{val: List<&2, Json>}
-  case JObj{val: List<&2, Pair(String, Json)>}
+type Json is Data:
+  JNull{}
+  JBool{val: Bool}
+  JNum{val: Nat}
+  JNeg{val: Nat}
+  JStr{val: String}
+  JArr{vals: List<&2, Json>}
+  JObj{kvs: List<&2, Sigma<&2, &2, String, _ => Json>>}
+  JRaw{raw: String}
 ```
 
 ### Constructors & Helpers
@@ -168,12 +170,13 @@ type Json:
 - `neg(n: Nat) -> Json`: `JNeg{n}` (negative integer, `-n`)
 - `str(s: String) -> Json`: `JStr{s}`
 - `arr(xs: List<&2, Json>) -> Json`: `JArr{xs}`
-- `obj(kvs: List<&2, Pair(String, Json)>) -> Json`: `JObj{kvs}`
-- `kv(key: String, val: Json) -> Pair(String, Json)`: Key-value tuple
+- `obj(kvs: List<&2, Sigma<&2, &2, String, _ => Json>>) -> Json`: `JObj{kvs}`
+- `kv(key: String, val: Json) -> Sigma<&2, &2, String, _ => Json>`: Key-value tuple
+- `raw(s: String) -> Json`: `JRaw{s}` (decimal or exponent number stored verbatim). The text is not validated, so pass only valid JSON number text such as `1.5` or `2e10`.
 
 ### Type Guards & Safe Unwrapping
-- `is_null`, `is_bool`, `is_num`, `is_neg`, `is_str`, `is_arr`, `is_obj`: Returns `Bool`
-- `as_bool`, `as_num`, `as_neg`, `as_str`, `as_arr`, `as_obj`: Returns `Maybe<&2, T>`
+- `is_null`, `is_bool`, `is_num`, `is_neg`, `is_str`, `is_arr`, `is_obj`, `is_raw`: Returns `Bool`
+- `as_bool`, `as_num`, `as_neg`, `as_str`, `as_arr`, `as_obj`, `as_raw`: Returns `Maybe<&2, T>`
 
 ### Object Dictionary APIs
 - `get(j: Json, key: String) -> Maybe<&2, Json>`: Lookup object property.
@@ -183,7 +186,7 @@ type Json:
 - `obj_len(j: Json) -> Nat`: Number of object entries.
 - `keys(j: Json) -> List<&2, String>`: Extract list of keys.
 - `values(j: Json) -> List<&2, Json>`: Extract list of values.
-- `entries(j: Json) -> List<&2, Pair(String, Json)>`: Extract key-value pairs.
+- `entries(j: Json) -> List<&2, Sigma<&2, &2, String, _ => Json>>`: Extract key-value pairs.
 - `merge(base: Json, overrides: Json) -> Json`: Merge two objects with override semantics.
 - `sort_keys(j: Json) -> Json`: Lexicographical sort of object keys.
 
@@ -192,16 +195,16 @@ type Json:
 - `arr_get(j: Json, idx: Nat) -> Maybe<&2, Json>`: Access element at 0-based index.
 - `arr_push(j: Json, item: Json) -> Json`: Append item to array.
 - `arr_set(j: Json, idx: Nat, val: Json) -> Json`: Replace element at index.
-- `arr_pop(j: Json) -> Pair(Json, Maybe<&2, Json>)`: Remove and return trailing element.
+- `arr_pop(j: Json) -> Pair(Maybe<&2, Json>, Json)`: Remove the trailing element. Returns `(Some{last}, remaining_array)`, or `(None{}, j)` if `j` is empty or not an array.
 - `arr_remove(j: Json, idx: Nat) -> Json`: Remove element at index.
 - `arr_insert(j: Json, idx: Nat, val: Json) -> Json`: Insert element at index.
 - `arr_map(~f: Json -> Json, j: Json) -> Json`: Map function over elements.
-- `arr_filter(~p: Json -> Bool, j: Json) -> Json`: Filter elements matching predicate.
-- `arr_fold(~f: Json -> T -> T, ~init: T, j: Json) -> T`: Left fold over elements.
+- `arr_filter(~f: Json -> Bool, j: Json) -> Json`: Filter elements matching predicate.
+- `arr_fold(~f: Json -> Json -> Json, acc: Json, j: Json) -> Json`: Left fold over elements.
 
 ### RFC 6901 JSON Pointer
 - `pointer(j: Json, ptr: String) -> Maybe<&2, Json>`: Deep navigation with RFC 6901 pointer syntax.
-- `pointer_set(j: Json, ptr: String, val: Json) -> Json`: In-place deep mutation along the pointer path.
+- `pointer_set(j: Json, ptr: String, val: Json) -> Json`: Returns the document with the value at the pointer path replaced. With the empty pointer `""` it replaces the whole document.
 
 ### Serialization & Validation
 - `parse(s: String) -> Result<&2, &2, String, Json>`: Parse JSON string into AST.
@@ -230,22 +233,46 @@ Expected output:
 All terms check.
 ```
 
-### Verified Laws Overview
+### Behaviour Notes
 
-- **Round-Trip Properties** (13 laws):
-  Ensures `parse(stringify(x)) == Done{x}` for all primitives, escaped strings, arrays, objects, and nested structures.
-- **Type Guard Soundness** (8 laws):
-  Proves that type inspection functions (`is_null`, `is_bool`, `is_num`, etc.) return `True{}` if and only if the constructor matches.
-- **Dictionary Soundness** (9 laws):
-  Proves object querying, length, removal, and left-identity under empty merge.
-- **Array Combinators Soundness** (8 laws):
-  Proves `arr_len`, `arr_get`, `arr_pop`, `arr_remove`, `arr_insert`, `arr_set_preserves_length`, and `arr_map_id`.
+- `arr_set` and `arr_remove` with an out-of-range index return the array unchanged.
+- `arr_insert` with an index past the end appends the element.
+- Object keys keep their order and duplicate keys are preserved by `parse` and `stringify`.
+- `stringify` escapes control characters below U+0020 (as `\uXXXX` or the short forms), so strings always serialize as valid JSON strings.
+- Integers of 2^48 or more are rejected by `parse` with `Fail{"number too large"}`; decimals and exponent numbers are kept as `JRaw` text.
+
+### Checked Laws Overview
+
+Each law in `LAWS.bend` states one concrete example, and `bend PROOF.bend` checks it. They act as machine-checked regression tests and do not prove the property for every possible input.
+
+- **Round-Trip Examples** (14 laws):
+  `parse(stringify(x))` gives back `x` for `null`, booleans, integers, strings, arrays, objects, a decimal (`JRaw`), and one nested document.
+- **Type Guard Soundness** (10 laws):
+  `is_null`, `is_bool`, `is_num`, `is_neg`, `is_str`, `is_arr`, `is_obj`, `is_raw` and `as_raw` return the expected result on example values.
+- **Dictionary Soundness** (8 laws):
+  `get` and `has` (found and missing), `obj_len`, `remove`, `merge` override behaviour, and `sort_keys` ordering.
+- **Array Soundness** (7 laws):
+  `arr_len`, `arr_get`, `arr_set`, `arr_pop`, `arr_insert` and `arr_remove`.
+- **JSON Pointer** (7 laws):
+  Root, object key, array index, nested path, missing key, escaped keys (`~0`, `~1`), and `pointer_set` on a leaf.
 - **Typed Extractors** (3 laws):
-  Proves correctness of `get_str`, `get_num`, and `get_bool`.
-- **JSON Pointer** (2 laws):
-  Proves root identity (`pointer(j, "") == Some{j}`) and single-step key navigation.
-- **Validation & Streaming** (4 laws):
-  Proves `validate` soundness and NDJSON round-trip properties.
+  `get_str`, `get_num` and `get_num_or`.
+- **Validation & NDJSON** (7 laws):
+  `validate` accepts valid input and rejects invalid input, leading zeros, a lone minus, and trailing commas in objects and arrays; plus `stringify_ndjson`.
+
+### Testing
+
+```bash
+# Machine-checked laws
+bend PROOF.bend
+
+# Independent conformance, scale and fuzz suite (needs Python 3 and `bend` on PATH)
+python3 tests/run_tests.py
+# or point it at a specific Bend command:
+BEND="bun /path/to/bend2/main.ts" python3 tests/run_tests.py
+```
+
+The suite compares `parse`, `stringify`, `pretty` and `validate` with Python's `json` module on RFC 8259 valid and invalid documents, large and deeply nested inputs, and seeded random documents. `tests/api_checks.bend` covers JSON Pointer (RFC 6901), objects, arrays and NDJSON.
 
 ---
 
