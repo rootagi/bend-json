@@ -81,6 +81,10 @@ type LineSplitState is Data:
   LSCheckNl{is_nl: Bool, c: U32}
   LSEmpty{is_empty: Bool, line: String}
 
+type WsState is Data:
+  WsStart{}
+  WsChar{is_w: Bool, c: U32}
+
 # Number parser result
 type NumRes is Data:
   NInt{is_n: Bool, val: Nat, rest: String}
@@ -1443,8 +1447,30 @@ def parse_str.loop(fuel: Nat, st: StrState, s: String, +acc: List<&2, Char>) -> 
             case EscErr{msg}:
               SErr{msg}
 
+def is_json_ws(+c: U32) -> Bool:
+  Bool.or(U32.is_eq(c, 32), Bool.or(U32.is_eq(c, 9), Bool.or(U32.is_eq(c, 10), U32.is_eq(c, 13))))
+
+def skip_ws_loop(fuel: Nat, st: WsState, s: String) -> String:
+  match fuel:
+    case 0n:
+      s
+    case 1n++p:
+      match st:
+        case WsStart{}:
+          match s:
+            case SNil{}:
+              ""
+            case SCon{Chr{+c}, +t}:
+              skip_ws_loop(p, WsChar{is_json_ws(c), c}, t)
+        case WsChar{is_w, c}:
+          match is_w:
+            case True{}:
+              skip_ws_loop(p, WsStart{}, s)
+            case False{}:
+              SCon{Chr{c}, s}
+
 def skip_ws(s: String) -> String:
-  String.trim_start(s)
+  skip_ws_loop(4294967295n, WsStart{}, s)
 
 def classify_num_char(+c: U32) -> NumCharKind:
   Bool.pick(NumCharKind, U32.is_eq(c, 48), NCZero{},
