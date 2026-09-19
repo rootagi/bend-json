@@ -55,6 +55,17 @@ type EscRes is Data:
   EscChar{c: Char, rest: String}
   EscErr{msg: String}
 
+type EscCharKind is Data:
+  ECQuote{}
+  ECSlash{}
+  ECNewline{}
+  ECCarriage{}
+  ECTab{}
+  ECBackspace{}
+  ECFormFeed{}
+  ECControl{code: U32}
+  ECOther{code: U32}
+
 type StrState is Data:
   StrNormal{}
   StrEscaping{}
@@ -761,16 +772,33 @@ def get_bool_or(j: Json, key: String, dflt: Bool) -> Bool:
 # 8. RFC 6901 JSON Pointer Traversal & Deep Mutation
 # ==============================================================================
 
-def unescape_ptr_loop(fuel: Nat, st: PtrUnescState, s: String, +acc: List<&2, Char>) -> String:
+def str_len_loop(s: String, acc: Nat) -> Nat:
+  match s:
+    case SNil{}:
+      acc
+    case SCon{_, t}:
+      str_len_loop(t, 1n+acc)
+
+def str_len(s: String) -> Nat:
+  str_len_loop(s, 0n)
+
+def str_from_rev_loop(cs: List<&2, Char>, cur: String) -> String:
+  match cs:
+    case Nil{}:
+      cur
+    case c <> t:
+      str_from_rev_loop(t, SCon{c, cur})
+
+def unescape_ptr_loop(fuel: Nat, st: PtrUnescState, s: String, acc: List<&2, Char>) -> String:
   match fuel:
     case 0n:
-      String.from_list(List.reverse(&2, Char, acc))
+      str_from_rev_loop(acc, "")
     case 1n++p:
       match st:
         case PUNormal{}:
           match s:
             case SNil{}:
-              String.from_list(List.reverse(&2, Char, acc))
+              str_from_rev_loop(acc, "")
             case SCon{Chr{+c}, +t}:
               unescape_ptr_loop(p, PUChar{U32.is_eq(c, 126), c}, t, acc)
         case PUChar{is_tilde, c}:
@@ -782,7 +810,7 @@ def unescape_ptr_loop(fuel: Nat, st: PtrUnescState, s: String, +acc: List<&2, Ch
         case PUTilde{}:
           match s:
             case SNil{}:
-              String.from_list(List.reverse(&2, Char, Chr{126} <> acc))
+              str_from_rev_loop(Chr{126} <> acc, "")
             case SCon{Chr{+c}, +t}:
               unescape_ptr_loop(p, PUTildeChar{U32.is_eq(c, 49), U32.is_eq(c, 48), c}, t, acc)
         case PUTildeChar{is_one, is_zero, c}:
@@ -797,7 +825,7 @@ def unescape_ptr_loop(fuel: Nat, st: PtrUnescState, s: String, +acc: List<&2, Ch
                   unescape_ptr_loop(p, PUNormal{}, s, Chr{c} <> Chr{126} <> acc)
 
 def unescape_ptr_token(+s: String) -> String:
-  unescape_ptr_loop(Nat.add(Nat.mul(String.length(s), 2n), 10n), PUNormal{}, s, Nil{})
+  unescape_ptr_loop(Nat.add(Nat.mul(str_len(s), 2n), 10n), PUNormal{}, s, Nil{})
 
 def split_ptr_loop(fuel: Nat, st: PtrSplitState, s: String, +cur: String) -> List<&2, String>:
   match fuel:
@@ -819,7 +847,7 @@ def split_ptr_loop(fuel: Nat, st: PtrSplitState, s: String, +cur: String) -> Lis
               split_ptr_loop(p, PSNormal{}, s, SCon{Chr{c}, cur})
 
 def split_ptr_tokens(+s: String) -> List<&2, String>:
-  split_ptr_loop(Nat.add(Nat.mul(String.length(s), 2n), 10n), PSNormal{}, s, "")
+  split_ptr_loop(Nat.add(Nat.mul(str_len(s), 2n), 10n), PSNormal{}, s, "")
 
 def parse_ptr_tokens_slash(is_slash: Bool, +t: String) -> Maybe<&2, List<&2, String>>:
   match is_slash:
@@ -882,7 +910,7 @@ def parse_nat_lead(is_zero: Bool, is_digit: Bool, +c: U32, +t: String) -> Maybe<
     case False{}:
       match is_digit:
         case True{}:
-          +fuel = {Nat.add(Nat.mul(String.length(t), 2n), 10n) : Nat}
+          +fuel = {Nat.add(Nat.mul(str_len(t), 2n), 10n) : Nat}
           parse_nat_loop(fuel, NParseDigits{}, t, U32.to_nat(U32.sub(c, 48)))
         case False{}:
           None{}
@@ -1027,38 +1055,56 @@ def escape_char(+c: Char) -> String:
                       String.from_list([{Chr{92}:Char}, {Chr{117}:Char}, {Chr{48}:Char}, {Chr{48}:Char}, hex_to_char(U32.div(code, 16)), hex_to_char(U32.mod(code, 16))]),
                       Char.show(Chr{code})))))))))
 
-def escape_char_acc(+c: Char, +acc: List<&2, Char>) -> List<&2, Char>:
-  match c:
-    case Chr{+code}:
-      Bool.pick(List<&2, Char>, U32.is_eq(code, 34), {Chr{34}:Char} <> {Chr{92}:Char} <> acc,
-        Bool.pick(List<&2, Char>, U32.is_eq(code, 92), {Chr{92}:Char} <> {Chr{92}:Char} <> acc,
-          Bool.pick(List<&2, Char>, U32.is_eq(code, 8), {Chr{98}:Char} <> {Chr{92}:Char} <> acc,
-            Bool.pick(List<&2, Char>, U32.is_eq(code, 12), {Chr{102}:Char} <> {Chr{92}:Char} <> acc,
-              Bool.pick(List<&2, Char>, U32.is_eq(code, 10), {Chr{110}:Char} <> {Chr{92}:Char} <> acc,
-                Bool.pick(List<&2, Char>, U32.is_eq(code, 13), {Chr{114}:Char} <> {Chr{92}:Char} <> acc,
-                  Bool.pick(List<&2, Char>, U32.is_eq(code, 9), {Chr{116}:Char} <> {Chr{92}:Char} <> acc,
-                    Bool.pick(List<&2, Char>, U32.is_lt(code, 32),
-                      hex_to_char(U32.mod(code, 16)) <> hex_to_char(U32.div(code, 16)) <> {Chr{48}:Char} <> {Chr{48}:Char} <> {Chr{117}:Char} <> {Chr{92}:Char} <> acc,
-                      Chr{code} <> acc))))))))
+def classify_esc_char(+c: U32) -> EscCharKind:
+  Bool.pick(EscCharKind, U32.is_eq(c, 34), ECQuote{},
+    Bool.pick(EscCharKind, U32.is_eq(c, 92), ECSlash{},
+      Bool.pick(EscCharKind, U32.is_eq(c, 10), ECNewline{},
+        Bool.pick(EscCharKind, U32.is_eq(c, 13), ECCarriage{},
+          Bool.pick(EscCharKind, U32.is_eq(c, 9), ECTab{},
+            Bool.pick(EscCharKind, U32.is_eq(c, 8), ECBackspace{},
+              Bool.pick(EscCharKind, U32.is_eq(c, 12), ECFormFeed{},
+                Bool.pick(EscCharKind, U32.is_lt(c, 32), ECControl{c},
+                  ECOther{c}))))))))
 
-def escape_str_loop(fuel: Nat, s: String, +acc: List<&2, Char>) -> String:
+def escape_step(kind: EscCharKind, acc: List<&2, Char>) -> List<&2, Char>:
+  match kind:
+    case ECQuote{}:
+      {Chr{34}:Char} <> {Chr{92}:Char} <> acc
+    case ECSlash{}:
+      {Chr{92}:Char} <> {Chr{92}:Char} <> acc
+    case ECNewline{}:
+      {Chr{110}:Char} <> {Chr{92}:Char} <> acc
+    case ECCarriage{}:
+      {Chr{114}:Char} <> {Chr{92}:Char} <> acc
+    case ECTab{}:
+      {Chr{116}:Char} <> {Chr{92}:Char} <> acc
+    case ECBackspace{}:
+      {Chr{98}:Char} <> {Chr{92}:Char} <> acc
+    case ECFormFeed{}:
+      {Chr{102}:Char} <> {Chr{92}:Char} <> acc
+    case ECControl{+code}:
+      hex_to_char(U32.mod(code, 16)) <> hex_to_char(U32.div(code, 16)) <> {Chr{48}:Char} <> {Chr{48}:Char} <> {Chr{117}:Char} <> {Chr{92}:Char} <> acc
+    case ECOther{code}:
+      Chr{code} <> acc
+
+def escape_str_loop(fuel: Nat, s: String, acc: List<&2, Char>) -> String:
   match fuel:
     case 0n:
-      String.from_list(List.reverse(&2, Char, acc))
+      str_from_rev_loop(acc, "")
     case 1n++p:
       match s:
         case SNil{}:
-          String.from_list(List.reverse(&2, Char, acc))
-        case SCon{c, t}:
-          escape_str_loop(p, t, escape_char_acc(c, acc))
+          str_from_rev_loop(acc, "")
+        case SCon{Chr{+code}, t}:
+          escape_str_loop(p, t, escape_step(classify_esc_char(code), acc))
 
 def escape_string(+s: String) -> String:
-  +len = String.length(s)
+  +len = str_len(s)
   +fuel = Nat.add(len, 10n)
   escape_str_loop(fuel, s, Nil{})
 
 def quote_string(+s: String) -> String:
-  +len = String.length(s)
+  +len = str_len(s)
   +fuel = Nat.add(len, 10n)
   "\"" ++ escape_str_loop(fuel, s, Nil{}) ++ "\""
 
@@ -1409,7 +1455,7 @@ def parse_escape_step(is_u: Bool, +c: U32, +rest: String) -> EscRes:
 def parse_escape_seq(+c: U32, rest: String) -> EscRes:
   parse_escape_step(U32.is_eq(c, 117), c, rest)
 
-def parse_str.loop(fuel: Nat, st: StrState, s: String, +acc: List<&2, Char>) -> StrRes:
+def parse_str.loop(fuel: Nat, st: StrState, s: String, acc: List<&2, Char>) -> StrRes:
   match fuel:
     case 0n:
       SErr{"fuel exhausted in string parse"}
@@ -1425,7 +1471,7 @@ def parse_str.loop(fuel: Nat, st: StrState, s: String, +acc: List<&2, Char>) -> 
         case StrChar{kind, c}:
           match kind:
             case SCQuote{}:
-              SOk{String.from_list(List.reverse(&2, Char, acc)), s}
+              SOk{str_from_rev_loop(acc, ""), s}
             case SCSlash{}:
               parse_str.loop(p, StrEscaping{}, s, acc)
             case SCControl{}:
@@ -1488,7 +1534,7 @@ def safe_mul_add(is_safe: Bool, acc: Nat, d: Nat) -> Nat:
     case False{}:
       acc
 
-def parse_num_loop(fuel: Nat, st: NumState, s: String, +acc: List<&2, Char>) -> NumRes:
+def parse_num_loop(fuel: Nat, st: NumState, s: String, acc: List<&2, Char>) -> NumRes:
   match fuel:
     case 0n:
       NErr{"fuel exhausted in number parser"}
@@ -1593,7 +1639,7 @@ def parse_num_loop(fuel: Nat, st: NumState, s: String, +acc: List<&2, Char>) -> 
         case NFracDigits{}:
           match s:
             case SNil{}:
-              NRaw{String.from_list(List.reverse(&2, Char, acc)), ""}
+              NRaw{str_from_rev_loop(acc, ""), ""}
             case SCon{Chr{+c}, +t}:
               parse_num_loop(p, NFracDigitsChar{classify_num_char(c), c}, t, acc)
 
@@ -1606,7 +1652,7 @@ def parse_num_loop(fuel: Nat, st: NumState, s: String, +acc: List<&2, Char>) -> 
             case NCExp{}:
               parse_num_loop(p, NExpStart{}, s, Chr{c} <> acc)
             case _:
-              NRaw{String.from_list(List.reverse(&2, Char, acc)), SCon{Chr{c}, s}}
+              NRaw{str_from_rev_loop(acc, ""), SCon{Chr{c}, s}}
 
         case NExpStart{}:
           match s:
@@ -1647,7 +1693,7 @@ def parse_num_loop(fuel: Nat, st: NumState, s: String, +acc: List<&2, Char>) -> 
         case NExpDigits{}:
           match s:
             case SNil{}:
-              NRaw{String.from_list(List.reverse(&2, Char, acc)), ""}
+              NRaw{str_from_rev_loop(acc, ""), ""}
             case SCon{Chr{+c}, +t}:
               parse_num_loop(p, NExpDigitsChar{classify_num_char(c), c}, t, acc)
 
@@ -1658,7 +1704,7 @@ def parse_num_loop(fuel: Nat, st: NumState, s: String, +acc: List<&2, Char>) -> 
             case NCNonZeroDigit{_}:
               parse_num_loop(p, NExpDigits{}, s, Chr{c} <> acc)
             case _:
-              NRaw{String.from_list(List.reverse(&2, Char, acc)), SCon{Chr{c}, s}}
+              NRaw{str_from_rev_loop(acc, ""), SCon{Chr{c}, s}}
 
 def parse_number(fuel: Nat, s: String) -> NumRes:
   parse_num_loop(fuel, NStart{}, s, Nil{})
@@ -1839,7 +1885,7 @@ def parse_step(fuel: Nat, act: StepAct, +stack: List<&2, Frame>, s: String) -> R
               Fail{"unexpected character when reading JSON value"}
 
 def parse(+s: String) -> Result<&2, &2, String, Json>:
-  +fuel = {Nat.add(Nat.mul(String.length(s), 8n), 100n) : Nat}
+  +fuel = {Nat.add(Nat.mul(str_len(s), 8n), 100n) : Nat}
   parse_step(fuel, ActValStart{}, Nil{}, skip_ws(s))
 
 # ==============================================================================
@@ -1899,7 +1945,7 @@ def split_lines.loop(fuel: Nat, st: LineSplitState, s: String, +cur: String) -> 
               line <> split_lines.loop(p, LSNormal{}, s, "")
 
 def split_lines_loop(+s: String, cur: String) -> List<&2, String>:
-  fuel = Nat.add(Nat.mul(String.length(s), 3n), 20n)
+  fuel = Nat.add(Nat.mul(str_len(s), 3n), 20n)
   split_lines.loop(fuel, LSNormal{}, s, cur)
 
 def list_parse_lines(lines: List<&2, String>) -> List<&2, Result<&2, &2, String, Json>>:
