@@ -63,6 +63,7 @@ type PtrSplitState is Data:
 type NatState is Data:
   NParseDigits{}
   NCheckDigit{is_d: Bool, c: U32}
+  NCheckSafe{is_safe: Bool, d: Nat}
 
 type LineSplitState is Data:
   LSNormal{}
@@ -72,6 +73,7 @@ type LineSplitState is Data:
 # Number parser result
 type NumRes is Data:
   NRes{val: Nat, rest: String}
+  NErr{msg: String}
 
 # General character classification
 type CharKind is Data:
@@ -771,6 +773,16 @@ def parse_ptr_tokens(+path: String) -> Maybe<&2, List<&2, String>>:
     case SCon{Chr{+c}, +t}:
       parse_ptr_tokens_slash(U32.is_eq(c, 47), t)
 
+def check_safe_mul10_step(is_small: Bool, acc: Nat, d: Nat) -> Bool:
+  match is_small:
+    case True{}:
+      True{}
+    case False{}:
+      Nat.read.fit(acc, Nat.divmod(Nat.sub(Nat.read.max(), d), 10n))
+
+def check_safe_mul10(+acc: Nat, d: Nat) -> Bool:
+  check_safe_mul10_step(Nat.is_le(acc, 10000n), acc, d)
+
 def parse_nat_loop(fuel: Nat, st: NatState, s: String, +acc: Nat) -> Maybe<&2, Nat>:
   match fuel:
     case 0n:
@@ -786,7 +798,14 @@ def parse_nat_loop(fuel: Nat, st: NatState, s: String, +acc: Nat) -> Maybe<&2, N
         case NCheckDigit{is_d, c}:
           match is_d:
             case True{}:
-              parse_nat_loop(p, NParseDigits{}, s, Nat.add(Nat.mul(acc, 10n), U32.to_nat(U32.sub(c, 48))))
+              +d = U32.to_nat(U32.sub(c, 48))
+              parse_nat_loop(p, NCheckSafe{check_safe_mul10(acc, d), d}, s, acc)
+            case False{}:
+              None{}
+        case NCheckSafe{is_safe, d}:
+          match is_safe:
+            case True{}:
+              parse_nat_loop(p, NParseDigits{}, s, Nat.add(Nat.mul(acc, 10n), d))
             case False{}:
               None{}
 
@@ -801,7 +820,7 @@ def parse_nat_lead(is_zero: Bool, is_digit: Bool, +c: U32, +t: String) -> Maybe<
     case False{}:
       match is_digit:
         case True{}:
-          +fuel = {Nat.add(String.length(t), 10n) : Nat}
+          +fuel = {Nat.add(Nat.mul(String.length(t), 2n), 10n) : Nat}
           parse_nat_loop(fuel, NParseDigits{}, t, U32.to_nat(U32.sub(c, 48)))
         case False{}:
           None{}
@@ -1209,6 +1228,7 @@ def skip_ws(s: String) -> String:
 type DigitsState is Data:
   DStart{}
   DChar{is_d: Bool, code: U32}
+  DCheckSafe{is_safe: Bool, d: Nat}
 
 def parse_digits.loop(fuel: Nat, st: DigitsState, s: String, +acc: Nat) -> NumRes:
   match fuel:
@@ -1226,10 +1246,17 @@ def parse_digits.loop(fuel: Nat, st: DigitsState, s: String, +acc: Nat) -> NumRe
         case DChar{is_d, code}:
           match is_d:
             case True{}:
-              +next_acc = Nat.add(Nat.mul(acc, 10n), U32.to_nat(U32.sub(code, 48)))
-              parse_digits.loop(p, DStart{}, s, next_acc)
+              +d = U32.to_nat(U32.sub(code, 48))
+              parse_digits.loop(p, DCheckSafe{check_safe_mul10(acc, d), d}, s, acc)
             case False{}:
               NRes{acc, SCon{Chr{code}, s}}
+        case DCheckSafe{is_safe, d}:
+          match is_safe:
+            case True{}:
+              +next_acc = Nat.add(Nat.mul(acc, 10n), d)
+              parse_digits.loop(p, DStart{}, s, next_acc)
+            case False{}:
+              NErr{"number too large"}
 
 def parse_digits(fuel: Nat, s: String, acc: Nat) -> NumRes:
   parse_digits.loop(fuel, DStart{}, s, acc)
@@ -1362,6 +1389,8 @@ def parse_step(fuel: Nat, act: StepAct, +stack: List<&2, Frame>, s: String) -> R
 
         case ActNumParsed{neg_flag, res}:
           match neg_flag res:
+            case _ NErr{msg}:
+              Fail{msg}
             case True{} NRes{n, rest}:
               parse_step(p, ActHaveVal{JNeg{n}}, stack, rest)
             case False{} NRes{n, rest}:

@@ -18,12 +18,15 @@ def on_ptr(v: Json.Json, r: Result<&1, &1, U32 & String, String>) -> IO(Unit):
     case Fail{_}:
       IO.print("HARNESS_ERROR: JSON_PTR environment variable not set")
 
-def on_content(content: String, ptr_res: Result<&1, &1, U32 & String, String>) -> IO(Unit):
-  match Json.parse(content):
+def on_parsed(r: Result<&2, &2, String, Json.Json>, ptr_res: Result<&1, &1, U32 & String, String>) -> IO(Unit):
+  match r:
     case Done{v}:
       on_ptr(v, ptr_res)
     case Fail{err}:
       IO.print("FAIL: " ++ err)
+
+def on_content(content: String, ptr_res: Result<&1, &1, U32 & String, String>) -> IO(Unit):
+  on_parsed(Json.parse(content), ptr_res)
 
 def read_ptr(content: String) -> IO(Unit):
   do IO<Unit>:

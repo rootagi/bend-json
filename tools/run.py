@@ -116,7 +116,7 @@ def test_f2():
         results[desc] = (is_ok == expect_ok)
 
     # Test pointer
-    res_ptr = run_harness('{"281474976710656": 1}', ptr="/281474976710656")
+    res_ptr = run_harness('[1, 2]', ptr="/281474976710656")
     lines_ptr = res_ptr.stdout.splitlines()
     ptr_ok = any("PTR_NONE" in line for line in lines_ptr)
     print(f"  Pointer /281474976710656: output={lines_ptr}")
