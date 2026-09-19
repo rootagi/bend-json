@@ -234,6 +234,22 @@ law validate_valid:
 law validate_invalid:
   {Json.validate("{invalid") == False{} : Bool}
 
+# LAW: validate rejects numbers with leading zeros (RFC 8259 §6)
+law validate_reject_leading_zero:
+  {Json.validate("007") == False{} : Bool}
+
+# LAW: validate rejects lone minus signs
+law validate_reject_lone_minus:
+  {Json.validate("-") == False{} : Bool}
+
+# LAW: validate rejects trailing commas in objects
+law validate_reject_obj_trailing_comma:
+  {Json.validate("{\"a\": 1,}") == False{} : Bool}
+
+# LAW: validate rejects trailing commas in arrays
+law validate_reject_arr_trailing_comma:
+  {Json.validate("[1,]") == False{} : Bool}
+
 # LAW: stringify_ndjson formats newline-delimited stream correctly
 law ndjson_stringify:
   {Json.stringify_ndjson([Json.JNum{1n}, Json.JNum{2n}]) == "1\n2\n" : String}

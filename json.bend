@@ -1261,6 +1261,48 @@ def parse_digits.loop(fuel: Nat, st: DigitsState, s: String, +acc: Nat) -> NumRe
 def parse_digits(fuel: Nat, s: String, acc: Nat) -> NumRes:
   parse_digits.loop(fuel, DStart{}, s, acc)
 
+def check_leading_zero(is_digit: Bool, +c: U32, +t: String) -> NumRes:
+  match is_digit:
+    case True{}:
+      NErr{"leading zero in number"}
+    case False{}:
+      NRes{0n, SCon{Chr{c}, t}}
+
+def parse_num_first_digit_zero(s: String) -> NumRes:
+  match s:
+    case SNil{}:
+      NRes{0n, ""}
+    case SCon{Chr{+c}, +t}:
+      is_digit = Bool.and(U32.is_ge(c, 48), U32.is_le(c, 57))
+      check_leading_zero(is_digit, c, t)
+
+def parse_num_first_digit_choice(fuel: Nat, is_zero: Bool, +c: U32, s: String) -> NumRes:
+  match is_zero:
+    case True{}:
+      parse_num_first_digit_zero(s)
+    case False{}:
+      +d = U32.to_nat(U32.sub(c, 48))
+      parse_digits(fuel, s, d)
+
+def parse_num_first_digit(fuel: Nat, +c: U32, s: String) -> NumRes:
+  is_zero = U32.is_eq(c, 48)
+  parse_num_first_digit_choice(fuel, is_zero, c, s)
+
+def parse_num_after_sign_char(fuel: Nat, is_digit: Bool, +c: U32, s: String) -> NumRes:
+  match is_digit:
+    case True{}:
+      parse_num_first_digit(fuel, c, s)
+    case False{}:
+      NErr{"expected digit after minus"}
+
+def parse_num_after_sign(fuel: Nat, s: String) -> NumRes:
+  match s:
+    case SNil{}:
+      NErr{"expected digit after minus"}
+    case SCon{Chr{+c}, +t}:
+      is_digit = Bool.and(U32.is_ge(c, 48), U32.is_le(c, 57))
+      parse_num_after_sign_char(fuel, is_digit, c, t)
+
 def parse_step(fuel: Nat, act: StepAct, +stack: List<&2, Frame>, s: String) -> Result<&2, &2, String, Json>:
   match fuel:
     case 0n:
@@ -1338,10 +1380,8 @@ def parse_step(fuel: Nat, act: StepAct, +stack: List<&2, Frame>, s: String) -> R
           match kind:
             case KindQuote{}:
               parse_step(p, ActKeyParsed{parse_str.loop(p, StrNormal{}, s, Nil{}), kvs}, stack, "")
-            case KindRBrace{}:
-              parse_step(p, ActHaveVal{JObj{List.reverse(&2, Sigma<&2, &2, String, _ => Json>, kvs)}}, stack, s)
             case _:
-              Fail{"expected string key or '}' in object"}
+              Fail{"expected string key in object"}
 
         case ActKeyParsed{res, +kvs}:
           match res:
@@ -1410,7 +1450,7 @@ def parse_step(fuel: Nat, act: StepAct, +stack: List<&2, Frame>, s: String) -> R
             case SCon{Chr{+c}, +t}:
               parse_step(p, ActValChar{classify_char(c), c}, stack, t)
 
-        case ActValChar{kind, c}:
+        case ActValChar{kind, +c}:
           match kind:
             case KindLBracket{}:
               parse_step(p, ActArrOpen{}, stack, skip_ws(s))
@@ -1428,9 +1468,9 @@ def parse_step(fuel: Nat, act: StepAct, +stack: List<&2, Frame>, s: String) -> R
               +full_str = {SCon{Chr{c}, s} : String}
               parse_step(p, ActLitCheck{"false", JBool{False{}}, String.starts_with(full_str, "false"), String.drop(full_str, 5n)}, stack, "")
             case KindMinus{}:
-              parse_step(p, ActNumParsed{True{}, parse_digits(p, s, 0n)}, stack, "")
+              parse_step(p, ActNumParsed{True{}, parse_num_after_sign(p, s)}, stack, "")
             case KindDigit{}:
-              parse_step(p, ActNumParsed{False{}, parse_digits(p, s, U32.to_nat(U32.sub(c, 48)))}, stack, "")
+              parse_step(p, ActNumParsed{False{}, parse_num_first_digit(p, c, s)}, stack, "")
             case _:
               Fail{"unexpected character when reading JSON value"}
 

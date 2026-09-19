@@ -182,5 +182,17 @@ def Laws.validate_valid():
 def Laws.validate_invalid():
   {==}
 
+def Laws.validate_reject_leading_zero():
+  {==}
+
+def Laws.validate_reject_lone_minus():
+  {==}
+
+def Laws.validate_reject_obj_trailing_comma():
+  {==}
+
+def Laws.validate_reject_arr_trailing_comma():
+  {==}
+
 def Laws.ndjson_stringify():
   {==}
