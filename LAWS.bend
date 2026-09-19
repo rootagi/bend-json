@@ -62,6 +62,10 @@ law roundtrip_obj_empty:
 law roundtrip_obj_single:
   {Json.parse(Json.stringify(Json.JObj{[Tuple{"name", Json.JStr{"bend"}}]})) == Done{Json.JObj{[Tuple{"name", Json.JStr{"bend"}}]}} : Result<&2, &2, String, Json.Json>}
 
+# LAW: Raw decimal number round-trips
+law roundtrip_raw_decimal:
+  {Json.parse(Json.stringify(Json.JRaw{"1.5"})) == Done{Json.JRaw{"1.5"}} : Result<&2, &2, String, Json.Json>}
+
 # LAW: Nested complex JSON structure round-trips
 law roundtrip_complex:
   {Json.parse(Json.stringify(Json.JObj{[Tuple{"a", Json.JNum{10n}}, Tuple{"b", Json.JArr{[Json.JBool{True{}}, Json.JNull{}]}}]})) == Done{Json.JObj{[Tuple{"a", Json.JNum{10n}}, Tuple{"b", Json.JArr{[Json.JBool{True{}}, Json.JNull{}]}}]}} : Result<&2, &2, String, Json.Json>}
@@ -101,6 +105,14 @@ law is_arr_sound:
 # LAW: is_obj is sound
 law is_obj_sound:
   {Json.is_obj(Json.JObj{Nil{}}) == True{} : Bool}
+
+# LAW: is_raw is sound
+law is_raw_sound:
+  {Json.is_raw(Json.JRaw{"1.5"}) == True{} : Bool}
+
+# LAW: as_raw is sound
+law as_raw_sound:
+  {Json.as_raw(Json.JRaw{"1.5"}) == Some{"1.5"} : Maybe<&2, String>}
 
 # ==============================================================================
 # 3. Query and Accessor Soundness Laws

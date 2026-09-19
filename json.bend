@@ -29,6 +29,7 @@ type Json is Data:
   JStr{val: String}
   JArr{vals: List<&2, Json>}
   JObj{kvs: List<&2, Sigma<&2, &2, String, _ => Json>>}
+  JRaw{raw: String}
 
 # Parser stack frames
 type Frame is Data:
@@ -72,8 +73,38 @@ type LineSplitState is Data:
 
 # Number parser result
 type NumRes is Data:
-  NRes{val: Nat, rest: String}
+  NInt{is_n: Bool, val: Nat, rest: String}
+  NRaw{raw: String, rest: String}
   NErr{msg: String}
+
+type NumCharKind is Data:
+  NCZero{}
+  NCNonZeroDigit{d: Nat}
+  NCMinus{}
+  NCPlus{}
+  NCDot{}
+  NCExp{}
+  NCOther{c: U32}
+
+type NumState is Data:
+  NStart{}
+  NStartChar{kind: NumCharKind, c: U32}
+  NAfterMinus{}
+  NAfterMinusChar{kind: NumCharKind, c: U32}
+  NAfterZero{is_n: Bool}
+  NAfterZeroChar{is_n: Bool, kind: NumCharKind, c: U32}
+  NIntDigits{is_n: Bool, acc: Nat, is_over: Bool}
+  NIntDigitsChar{is_n: Bool, acc: Nat, is_over: Bool, kind: NumCharKind, c: U32}
+  NFracStart{}
+  NFracStartChar{kind: NumCharKind, c: U32}
+  NFracDigits{}
+  NFracDigitsChar{kind: NumCharKind, c: U32}
+  NExpStart{}
+  NExpStartChar{kind: NumCharKind, c: U32}
+  NExpSign{}
+  NExpSignChar{kind: NumCharKind, c: U32}
+  NExpDigits{}
+  NExpDigitsChar{kind: NumCharKind, c: U32}
 
 # General character classification
 type CharKind is Data:
@@ -111,7 +142,7 @@ type StepAct is Data:
   ActHaveVal{v: Json}
   ActCheckEof{v: Json}
   ActStrParsed{res: StrRes}
-  ActNumParsed{neg_flag: Bool, res: NumRes}
+  ActNumParsed{res: NumRes}
   ActLitCheck{expected: String, val: Json, ok: Bool, rest: String}
 
 # Serializer stack task
@@ -169,6 +200,9 @@ def obj(kvs: List<&2, Sigma<&2, &2, String, _ => Json>>) -> Json:
 def kv(key: String, val: Json) -> Sigma<&2, &2, String, _ => Json>:
   Tuple{key, val}
 
+def raw(s: String) -> Json:
+  JRaw{s}
+
 # ==============================================================================
 # 3. Type Checking and Guards
 # ==============================================================================
@@ -222,6 +256,13 @@ def is_obj(j: Json) -> Bool:
     case _:
       False{}
 
+def is_raw(j: Json) -> Bool:
+  match j:
+    case JRaw{_}:
+      True{}
+    case _:
+      False{}
+
 # ==============================================================================
 # 4. Value Extraction
 # ==============================================================================
@@ -265,6 +306,13 @@ def as_obj(j: Json) -> Maybe<&2, List<&2, Sigma<&2, &2, String, _ => Json>>>:
   match j:
     case JObj{kvs}:
       Some{kvs}
+    case _:
+      None{}
+
+def as_raw(j: Json) -> Maybe<&2, String>:
+  match j:
+    case JRaw{s}:
+      Some{s}
     case _:
       None{}
 
@@ -992,6 +1040,8 @@ def json_size_loop(fuel: Nat, +tasks: List<&2, SizeTask>, +acc: Nat) -> Nat:
                   json_size_loop(p, SzArr{vals} <> t, Nat.add(acc, 1n))
                 case JObj{kvs}:
                   json_size_loop(p, SzObj{kvs} <> t, Nat.add(acc, 1n))
+                case JRaw{_}:
+                  json_size_loop(p, t, Nat.add(acc, 1n))
             case SzArr{items}:
               match items:
                 case Nil{}:
@@ -1052,6 +1102,8 @@ def stringify_loop(fuel: Nat, +tasks: List<&2, PrintTask>, acc: String) -> Resul
                       stringify_loop(p, t, acc ++ "{}")
                     case Tuple{k, v} <> kt:
                       stringify_loop(p, PVal{v} <> PObj{kt} <> PLit{"}"} <> t, acc ++ "{" ++ quote_string(k) ++ ":")
+                case JRaw{s}:
+                  stringify_loop(p, t, acc ++ s)
             case PArr{items}:
               match items:
                 case Nil{}:
@@ -1140,6 +1192,8 @@ def pretty_indent_loop(fuel: Nat, +tasks: List<&2, PrettyTask>, +step_str: Strin
                     case Tuple{k, v} <> kt:
                       +next_ind = {ind ++ step_str : String}
                       pretty_indent_loop(p, PrVal{v, next_ind} <> PrObj{kt, next_ind} <> PrLit{"\n" ++ ind ++ "}"} <> t, step_str, acc ++ "{\n" ++ next_ind ++ quote_string(k) ++ ": ")
+                case JRaw{s}:
+                  pretty_indent_loop(p, t, step_str, acc ++ s)
             case PrArr{items, +ind}:
               match items:
                 case Nil{}:
@@ -1225,83 +1279,196 @@ def parse_str.loop(fuel: Nat, st: StrState, s: String, +acc: List<&2, Char>) -> 
 def skip_ws(s: String) -> String:
   String.trim_start(s)
 
-type DigitsState is Data:
-  DStart{}
-  DChar{is_d: Bool, code: U32}
-  DCheckSafe{is_safe: Bool, d: Nat}
+def classify_num_char(+c: U32) -> NumCharKind:
+  Bool.pick(NumCharKind, U32.is_eq(c, 48), NCZero{},
+    Bool.pick(NumCharKind, Bool.and(U32.is_ge(c, 49), U32.is_le(c, 57)), NCNonZeroDigit{U32.to_nat(U32.sub(c, 48))},
+      Bool.pick(NumCharKind, U32.is_eq(c, 45), NCMinus{},
+        Bool.pick(NumCharKind, U32.is_eq(c, 43), NCPlus{},
+          Bool.pick(NumCharKind, U32.is_eq(c, 46), NCDot{},
+            Bool.pick(NumCharKind, Bool.or(U32.is_eq(c, 101), U32.is_eq(c, 69)), NCExp{},
+              NCOther{c}))))))
 
-def parse_digits.loop(fuel: Nat, st: DigitsState, s: String, +acc: Nat) -> NumRes:
+def safe_mul_add(is_safe: Bool, acc: Nat, d: Nat) -> Nat:
+  match is_safe:
+    case True{}:
+      Nat.add(Nat.mul(acc, 10n), d)
+    case False{}:
+      acc
+
+def parse_num_loop(fuel: Nat, st: NumState, s: String, +acc: List<&2, Char>) -> NumRes:
   match fuel:
     case 0n:
-      NRes{acc, s}
+      NErr{"fuel exhausted in number parser"}
     case 1n++p:
       match st:
-        case DStart{}:
+        case NStart{}:
           match s:
             case SNil{}:
-              NRes{acc, ""}
-            case SCon{Chr{+code}, +t}:
-              is_d = Bool.and(U32.is_ge(code, 48), U32.is_le(code, 57))
-              parse_digits.loop(p, DChar{is_d, code}, t, acc)
-        case DChar{is_d, code}:
-          match is_d:
-            case True{}:
-              +d = U32.to_nat(U32.sub(code, 48))
-              parse_digits.loop(p, DCheckSafe{check_safe_mul10(acc, d), d}, s, acc)
-            case False{}:
-              NRes{acc, SCon{Chr{code}, s}}
-        case DCheckSafe{is_safe, d}:
-          match is_safe:
-            case True{}:
-              +next_acc = Nat.add(Nat.mul(acc, 10n), d)
-              parse_digits.loop(p, DStart{}, s, next_acc)
-            case False{}:
-              NErr{"number too large"}
+              NErr{"unexpected EOF in number"}
+            case SCon{Chr{+c}, +t}:
+              parse_num_loop(p, NStartChar{classify_num_char(c), c}, t, acc)
 
-def parse_digits(fuel: Nat, s: String, acc: Nat) -> NumRes:
-  parse_digits.loop(fuel, DStart{}, s, acc)
+        case NStartChar{kind, c}:
+          match kind:
+            case NCMinus{}:
+              parse_num_loop(p, NAfterMinus{}, s, Chr{c} <> acc)
+            case NCZero{}:
+              parse_num_loop(p, NAfterZero{False{}}, s, Chr{c} <> acc)
+            case NCNonZeroDigit{d}:
+              parse_num_loop(p, NIntDigits{False{}, d, False{}}, s, Chr{c} <> acc)
+            case _:
+              NErr{"expected digit or minus"}
 
-def check_leading_zero(is_digit: Bool, +c: U32, +t: String) -> NumRes:
-  match is_digit:
-    case True{}:
-      NErr{"leading zero in number"}
-    case False{}:
-      NRes{0n, SCon{Chr{c}, t}}
+        case NAfterMinus{}:
+          match s:
+            case SNil{}:
+              NErr{"expected digit after minus"}
+            case SCon{Chr{+c}, +t}:
+              parse_num_loop(p, NAfterMinusChar{classify_num_char(c), c}, t, acc)
 
-def parse_num_first_digit_zero(s: String) -> NumRes:
-  match s:
-    case SNil{}:
-      NRes{0n, ""}
-    case SCon{Chr{+c}, +t}:
-      is_digit = Bool.and(U32.is_ge(c, 48), U32.is_le(c, 57))
-      check_leading_zero(is_digit, c, t)
+        case NAfterMinusChar{kind, c}:
+          match kind:
+            case NCZero{}:
+              parse_num_loop(p, NAfterZero{True{}}, s, Chr{c} <> acc)
+            case NCNonZeroDigit{d}:
+              parse_num_loop(p, NIntDigits{True{}, d, False{}}, s, Chr{c} <> acc)
+            case _:
+              NErr{"expected digit after minus"}
 
-def parse_num_first_digit_choice(fuel: Nat, is_zero: Bool, +c: U32, s: String) -> NumRes:
-  match is_zero:
-    case True{}:
-      parse_num_first_digit_zero(s)
-    case False{}:
-      +d = U32.to_nat(U32.sub(c, 48))
-      parse_digits(fuel, s, d)
+        case NAfterZero{is_n}:
+          match s:
+            case SNil{}:
+              NInt{is_n, 0n, ""}
+            case SCon{Chr{+c}, +t}:
+              parse_num_loop(p, NAfterZeroChar{is_n, classify_num_char(c), c}, t, acc)
 
-def parse_num_first_digit(fuel: Nat, +c: U32, s: String) -> NumRes:
-  is_zero = U32.is_eq(c, 48)
-  parse_num_first_digit_choice(fuel, is_zero, c, s)
+        case NAfterZeroChar{is_n, kind, c}:
+          match kind:
+            case NCZero{}:
+              NErr{"leading zero in number"}
+            case NCNonZeroDigit{_}:
+              NErr{"leading zero in number"}
+            case NCDot{}:
+              parse_num_loop(p, NFracStart{}, s, Chr{c} <> acc)
+            case NCExp{}:
+              parse_num_loop(p, NExpStart{}, s, Chr{c} <> acc)
+            case _:
+              NInt{is_n, 0n, SCon{Chr{c}, s}}
 
-def parse_num_after_sign_char(fuel: Nat, is_digit: Bool, +c: U32, s: String) -> NumRes:
-  match is_digit:
-    case True{}:
-      parse_num_first_digit(fuel, c, s)
-    case False{}:
-      NErr{"expected digit after minus"}
+        case NIntDigits{is_n, +acc_val, is_over}:
+          match s:
+            case SNil{}:
+              Bool.pick(NumRes, is_over, NErr{"number too large"}, NInt{is_n, acc_val, ""})
+            case SCon{Chr{+c}, +t}:
+              parse_num_loop(p, NIntDigitsChar{is_n, acc_val, is_over, classify_num_char(c), c}, t, acc)
 
-def parse_num_after_sign(fuel: Nat, s: String) -> NumRes:
-  match s:
-    case SNil{}:
-      NErr{"expected digit after minus"}
-    case SCon{Chr{+c}, +t}:
-      is_digit = Bool.and(U32.is_ge(c, 48), U32.is_le(c, 57))
-      parse_num_after_sign_char(fuel, is_digit, c, t)
+        case NIntDigitsChar{is_n, +acc_val, is_over, kind, c}:
+          match kind:
+            case NCZero{}:
+              +is_safe = check_safe_mul10(acc_val, 0n)
+              new_over = Bool.or(is_over, Bool.not(is_safe))
+              new_val = safe_mul_add(is_safe, acc_val, 0n)
+              parse_num_loop(p, NIntDigits{is_n, new_val, new_over}, s, Chr{c} <> acc)
+            case NCNonZeroDigit{+d}:
+              +is_safe = check_safe_mul10(acc_val, d)
+              new_over = Bool.or(is_over, Bool.not(is_safe))
+              new_val = safe_mul_add(is_safe, acc_val, d)
+              parse_num_loop(p, NIntDigits{is_n, new_val, new_over}, s, Chr{c} <> acc)
+            case NCDot{}:
+              parse_num_loop(p, NFracStart{}, s, Chr{c} <> acc)
+            case NCExp{}:
+              parse_num_loop(p, NExpStart{}, s, Chr{c} <> acc)
+            case _:
+              Bool.pick(NumRes, is_over, NErr{"number too large"}, NInt{is_n, acc_val, SCon{Chr{c}, s}})
+
+        case NFracStart{}:
+          match s:
+            case SNil{}:
+              NErr{"expected digit after decimal point"}
+            case SCon{Chr{+c}, +t}:
+              parse_num_loop(p, NFracStartChar{classify_num_char(c), c}, t, acc)
+
+        case NFracStartChar{kind, c}:
+          match kind:
+            case NCZero{}:
+              parse_num_loop(p, NFracDigits{}, s, Chr{c} <> acc)
+            case NCNonZeroDigit{_}:
+              parse_num_loop(p, NFracDigits{}, s, Chr{c} <> acc)
+            case _:
+              NErr{"expected digit after decimal point"}
+
+        case NFracDigits{}:
+          match s:
+            case SNil{}:
+              NRaw{String.from_list(List.reverse(&2, Char, acc)), ""}
+            case SCon{Chr{+c}, +t}:
+              parse_num_loop(p, NFracDigitsChar{classify_num_char(c), c}, t, acc)
+
+        case NFracDigitsChar{kind, c}:
+          match kind:
+            case NCZero{}:
+              parse_num_loop(p, NFracDigits{}, s, Chr{c} <> acc)
+            case NCNonZeroDigit{_}:
+              parse_num_loop(p, NFracDigits{}, s, Chr{c} <> acc)
+            case NCExp{}:
+              parse_num_loop(p, NExpStart{}, s, Chr{c} <> acc)
+            case _:
+              NRaw{String.from_list(List.reverse(&2, Char, acc)), SCon{Chr{c}, s}}
+
+        case NExpStart{}:
+          match s:
+            case SNil{}:
+              NErr{"expected digit or sign in exponent"}
+            case SCon{Chr{+c}, +t}:
+              parse_num_loop(p, NExpStartChar{classify_num_char(c), c}, t, acc)
+
+        case NExpStartChar{kind, c}:
+          match kind:
+            case NCPlus{}:
+              parse_num_loop(p, NExpSign{}, s, Chr{c} <> acc)
+            case NCMinus{}:
+              parse_num_loop(p, NExpSign{}, s, Chr{c} <> acc)
+            case NCZero{}:
+              parse_num_loop(p, NExpDigits{}, s, Chr{c} <> acc)
+            case NCNonZeroDigit{_}:
+              parse_num_loop(p, NExpDigits{}, s, Chr{c} <> acc)
+            case _:
+              NErr{"expected digit or sign in exponent"}
+
+        case NExpSign{}:
+          match s:
+            case SNil{}:
+              NErr{"expected digit after exponent sign"}
+            case SCon{Chr{+c}, +t}:
+              parse_num_loop(p, NExpSignChar{classify_num_char(c), c}, t, acc)
+
+        case NExpSignChar{kind, c}:
+          match kind:
+            case NCZero{}:
+              parse_num_loop(p, NExpDigits{}, s, Chr{c} <> acc)
+            case NCNonZeroDigit{_}:
+              parse_num_loop(p, NExpDigits{}, s, Chr{c} <> acc)
+            case _:
+              NErr{"expected digit after exponent sign"}
+
+        case NExpDigits{}:
+          match s:
+            case SNil{}:
+              NRaw{String.from_list(List.reverse(&2, Char, acc)), ""}
+            case SCon{Chr{+c}, +t}:
+              parse_num_loop(p, NExpDigitsChar{classify_num_char(c), c}, t, acc)
+
+        case NExpDigitsChar{kind, c}:
+          match kind:
+            case NCZero{}:
+              parse_num_loop(p, NExpDigits{}, s, Chr{c} <> acc)
+            case NCNonZeroDigit{_}:
+              parse_num_loop(p, NExpDigits{}, s, Chr{c} <> acc)
+            case _:
+              NRaw{String.from_list(List.reverse(&2, Char, acc)), SCon{Chr{c}, s}}
+
+def parse_number(fuel: Nat, s: String) -> NumRes:
+  parse_num_loop(fuel, NStart{}, s, Nil{})
 
 def parse_step(fuel: Nat, act: StepAct, +stack: List<&2, Frame>, s: String) -> Result<&2, &2, String, Json>:
   match fuel:
@@ -1427,14 +1594,18 @@ def parse_step(fuel: Nat, act: StepAct, +stack: List<&2, Frame>, s: String) -> R
             case SOk{val, rest}:
               parse_step(p, ActHaveVal{JStr{val}}, stack, rest)
 
-        case ActNumParsed{neg_flag, res}:
-          match neg_flag res:
-            case _ NErr{msg}:
+        case ActNumParsed{res}:
+          match res:
+            case NErr{msg}:
               Fail{msg}
-            case True{} NRes{n, rest}:
-              parse_step(p, ActHaveVal{JNeg{n}}, stack, rest)
-            case False{} NRes{n, rest}:
-              parse_step(p, ActHaveVal{JNum{n}}, stack, rest)
+            case NRaw{raw_str, rest}:
+              parse_step(p, ActHaveVal{JRaw{raw_str}}, stack, rest)
+            case NInt{is_n, val, rest}:
+              match is_n:
+                case True{}:
+                  parse_step(p, ActHaveVal{JNeg{val}}, stack, rest)
+                case False{}:
+                  parse_step(p, ActHaveVal{JNum{val}}, stack, rest)
 
         case ActLitCheck{expected, +val, ok, rest}:
           match ok:
@@ -1468,9 +1639,9 @@ def parse_step(fuel: Nat, act: StepAct, +stack: List<&2, Frame>, s: String) -> R
               +full_str = {SCon{Chr{c}, s} : String}
               parse_step(p, ActLitCheck{"false", JBool{False{}}, String.starts_with(full_str, "false"), String.drop(full_str, 5n)}, stack, "")
             case KindMinus{}:
-              parse_step(p, ActNumParsed{True{}, parse_num_after_sign(p, s)}, stack, "")
+              parse_step(p, ActNumParsed{parse_number(p, SCon{Chr{c}, s})}, stack, "")
             case KindDigit{}:
-              parse_step(p, ActNumParsed{False{}, parse_num_first_digit(p, c, s)}, stack, "")
+              parse_step(p, ActNumParsed{parse_number(p, SCon{Chr{c}, s})}, stack, "")
             case _:
               Fail{"unexpected character when reading JSON value"}
 

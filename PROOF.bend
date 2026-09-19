@@ -46,6 +46,9 @@ def Laws.roundtrip_obj_empty():
 def Laws.roundtrip_obj_single():
   {==}
 
+def Laws.roundtrip_raw_decimal():
+  {==}
+
 def Laws.roundtrip_complex():
   {==}
 
@@ -75,6 +78,12 @@ def Laws.is_arr_sound():
   {==}
 
 def Laws.is_obj_sound():
+  {==}
+
+def Laws.is_raw_sound():
+  {==}
+
+def Laws.as_raw_sound():
   {==}
 
 # ==============================================================================
