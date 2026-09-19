@@ -121,9 +121,9 @@ type PrintTask is Data:
 
 # Pretty printer stack task
 type PrettyTask is Data:
-  PrVal{j: Json, indent: Nat}
-  PrArr{items: List<&2, Json>, indent: Nat}
-  PrObj{kvs: List<&2, Sigma<&2, &2, String, _ => Json>>, indent: Nat}
+  PrVal{j: Json, indent: String}
+  PrArr{items: List<&2, Json>, indent: String}
+  PrObj{kvs: List<&2, Sigma<&2, &2, String, _ => Json>>, indent: String}
   PrLit{s: String}
 
 # Size calculation stack task
@@ -1072,16 +1072,12 @@ def make_spaces(n: Nat) -> String:
     case 1n+p:
       " " ++ make_spaces(p)
 
-def make_custom_indent(fuel: Nat, count: Nat, +step_str: String) -> String:
-  match fuel:
+def make_custom_indent(count: Nat, +step_str: String) -> String:
+  match count:
     case 0n:
       ""
-    case 1n++p:
-      match count:
-        case 0n:
-          ""
-        case 1n+cp:
-          step_str ++ make_custom_indent(p, cp, step_str)
+    case 1n+cp:
+      step_str ++ make_custom_indent(cp, step_str)
 
 def pretty_indent_loop(fuel: Nat, +tasks: List<&2, PrettyTask>, +step_str: String, acc: String) -> String:
   match fuel:
@@ -1116,38 +1112,32 @@ def pretty_indent_loop(fuel: Nat, +tasks: List<&2, PrettyTask>, +step_str: Strin
                     case Nil{}:
                       pretty_indent_loop(p, t, step_str, acc ++ "[]")
                     case vh <> vt:
-                      +next_ind = {1n+ind : Nat}
-                      +ind_str = make_custom_indent(10n, next_ind, step_str)
-                      +close_ind = make_custom_indent(10n, ind, step_str)
-                      pretty_indent_loop(p, PrVal{vh, next_ind} <> PrArr{vt, next_ind} <> PrLit{"\n" ++ close_ind ++ "]"} <> t, step_str, acc ++ "[\n" ++ ind_str)
+                      +next_ind = {ind ++ step_str : String}
+                      pretty_indent_loop(p, PrVal{vh, next_ind} <> PrArr{vt, next_ind} <> PrLit{"\n" ++ ind ++ "]"} <> t, step_str, acc ++ "[\n" ++ next_ind)
                 case JObj{kvs}:
                   match kvs:
                     case Nil{}:
                       pretty_indent_loop(p, t, step_str, acc ++ "{}")
                     case Tuple{k, v} <> kt:
-                      +next_ind = {1n+ind : Nat}
-                      +ind_str = make_custom_indent(10n, next_ind, step_str)
-                      +close_ind = make_custom_indent(10n, ind, step_str)
-                      pretty_indent_loop(p, PrVal{v, next_ind} <> PrObj{kt, next_ind} <> PrLit{"\n" ++ close_ind ++ "}"} <> t, step_str, acc ++ "{\n" ++ ind_str ++ quote_string(k) ++ ": ")
+                      +next_ind = {ind ++ step_str : String}
+                      pretty_indent_loop(p, PrVal{v, next_ind} <> PrObj{kt, next_ind} <> PrLit{"\n" ++ ind ++ "}"} <> t, step_str, acc ++ "{\n" ++ next_ind ++ quote_string(k) ++ ": ")
             case PrArr{items, +ind}:
               match items:
                 case Nil{}:
                   pretty_indent_loop(p, t, step_str, acc)
                 case vh <> vt:
-                  +ind_str = make_custom_indent(10n, ind, step_str)
-                  pretty_indent_loop(p, PrVal{vh, ind} <> PrArr{vt, ind} <> t, step_str, acc ++ ",\n" ++ ind_str)
+                  pretty_indent_loop(p, PrVal{vh, ind} <> PrArr{vt, ind} <> t, step_str, acc ++ ",\n" ++ ind)
             case PrObj{kvs, +ind}:
               match kvs:
                 case Nil{}:
                   pretty_indent_loop(p, t, step_str, acc)
                 case Tuple{k, v} <> kt:
-                  +ind_str = make_custom_indent(10n, ind, step_str)
-                  pretty_indent_loop(p, PrVal{v, ind} <> PrObj{kt, ind} <> t, step_str, acc ++ ",\n" ++ ind_str ++ quote_string(k) ++ ": ")
+                  pretty_indent_loop(p, PrVal{v, ind} <> PrObj{kt, ind} <> t, step_str, acc ++ ",\n" ++ ind ++ quote_string(k) ++ ": ")
 
 def pretty_indent(+j: Json, step: Nat) -> String:
   +size = json_size(j)
   +fuel = Nat.add(Nat.mul(size, 4n), 16n)
-  pretty_indent_loop(fuel, [PrVal{j, 0n}], make_spaces(step), "")
+  pretty_indent_loop(fuel, [PrVal{j, ""}], make_spaces(step), "")
 
 def pretty(j: Json) -> String:
   pretty_indent(j, 2n)
