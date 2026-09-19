@@ -126,6 +126,13 @@ type PrettyTask is Data:
   PrObj{kvs: List<&2, Sigma<&2, &2, String, _ => Json>>, indent: Nat}
   PrLit{s: String}
 
+# Size calculation stack task
+type SizeTask is Data:
+  SzVal{j: Json}
+  SzArr{vals: List<&2, Json>}
+  SzObj{kvs: List<&2, Sigma<&2, &2, String, _ => Json>>}
+
+
 # ==============================================================================
 # 2. Constructors and Builders
 # ==============================================================================
@@ -940,7 +947,7 @@ def escape_string(s: String) -> String:
 def quote_string(s: String) -> String:
   "\"" ++ escape_string(s) ++ "\""
 
-def stringify_loop(fuel: Nat, +tasks: List<&2, PrintTask>, acc: String) -> String:
+def json_size_loop(fuel: Nat, +tasks: List<&2, SizeTask>, +acc: Nat) -> Nat:
   match fuel:
     case 0n:
       acc
@@ -948,6 +955,52 @@ def stringify_loop(fuel: Nat, +tasks: List<&2, PrintTask>, acc: String) -> Strin
       match tasks:
         case Nil{}:
           acc
+        case h <> t:
+          match h:
+            case SzVal{j}:
+              match j:
+                case JNull{}:
+                  json_size_loop(p, t, Nat.add(acc, 1n))
+                case JBool{_}:
+                  json_size_loop(p, t, Nat.add(acc, 1n))
+                case JNum{_}:
+                  json_size_loop(p, t, Nat.add(acc, 1n))
+                case JNeg{_}:
+                  json_size_loop(p, t, Nat.add(acc, 1n))
+                case JStr{_}:
+                  json_size_loop(p, t, Nat.add(acc, 1n))
+                case JArr{vals}:
+                  json_size_loop(p, SzArr{vals} <> t, Nat.add(acc, 1n))
+                case JObj{kvs}:
+                  json_size_loop(p, SzObj{kvs} <> t, Nat.add(acc, 1n))
+            case SzArr{items}:
+              match items:
+                case Nil{}:
+                  json_size_loop(p, t, acc)
+                case vh <> vt:
+                  json_size_loop(p, SzVal{vh} <> SzArr{vt} <> t, acc)
+            case SzObj{kvs}:
+              match kvs:
+                case Nil{}:
+                  json_size_loop(p, t, acc)
+                case Tuple{_, v} <> kt:
+                  json_size_loop(p, SzVal{v} <> SzObj{kt} <> t, acc)
+
+def json_size(j: Json) -> Nat:
+  json_size_loop(4294967295n, [SzVal{j}], 0n)
+
+def stringify_loop(fuel: Nat, +tasks: List<&2, PrintTask>, acc: String) -> Result<&2, &2, String, String>:
+  match fuel:
+    case 0n:
+      match tasks:
+        case Nil{}:
+          Done{acc}
+        case _:
+          Fail{"fuel exhausted in stringify"}
+    case 1n++p:
+      match tasks:
+        case Nil{}:
+          Done{acc}
         case h <> t:
           match h:
             case PLit{s}:
@@ -993,8 +1046,20 @@ def stringify_loop(fuel: Nat, +tasks: List<&2, PrintTask>, acc: String) -> Strin
                 case Tuple{k, v} <> kt:
                   stringify_loop(p, PVal{v} <> PObj{kt} <> t, acc ++ "," ++ quote_string(k) ++ ":")
 
+def stringify_checked(+j: Json) -> Result<&2, &2, String, String>:
+  +size = json_size(j)
+  +fuel = Nat.add(Nat.mul(size, 4n), 16n)
+  stringify_loop(fuel, [PVal{j}], "")
+
+def stringify_unwrap(r: Result<&2, &2, String, String>) -> String:
+  match r:
+    case Done{s}:
+      s
+    case Fail{_}:
+      ""
+
 def stringify(j: Json) -> String:
-  stringify_loop(1000n, [PVal{j}], "")
+  stringify_unwrap(stringify_checked(j))
 
 # ==============================================================================
 # 10. Pretty Printing with Configurable Indentation
@@ -1079,8 +1144,10 @@ def pretty_indent_loop(fuel: Nat, +tasks: List<&2, PrettyTask>, +step_str: Strin
                   +ind_str = make_custom_indent(10n, ind, step_str)
                   pretty_indent_loop(p, PrVal{v, ind} <> PrObj{kt, ind} <> t, step_str, acc ++ ",\n" ++ ind_str ++ quote_string(k) ++ ": ")
 
-def pretty_indent(j: Json, step: Nat) -> String:
-  pretty_indent_loop(1000n, [PrVal{j, 0n}], make_spaces(step), "")
+def pretty_indent(+j: Json, step: Nat) -> String:
+  +size = json_size(j)
+  +fuel = Nat.add(Nat.mul(size, 4n), 16n)
+  pretty_indent_loop(fuel, [PrVal{j, 0n}], make_spaces(step), "")
 
 def pretty(j: Json) -> String:
   pretty_indent(j, 2n)
