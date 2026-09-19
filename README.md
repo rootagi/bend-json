@@ -46,7 +46,7 @@ Import directly by content hash without copying any files:
 
 ```bend
 import Base
-import 0x6bcc5639f884b922a3ea766a6acc017c/json.bend as Json
+import 0x1f4d6c03caf955232d0b0dc6e6f36cf4/json.bend as Json
 ```
 
 ### Option 2: Local File Import
