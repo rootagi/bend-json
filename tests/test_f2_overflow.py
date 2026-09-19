@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 import sys
 import subprocess
+import os
+from pathlib import Path
+
+REPO_DIR = Path(__file__).resolve().parent.parent
 
 def main():
     # 281474976710656 (2^48) must fail gracefully with FAIL:, never abort/crash
-    cmd = """cat << 'EOF' > /tmp/input_f2.json\n281474976710656\nEOF\ncd /root/bend && JSON_IN=/tmp/input_f2.json bend tests/harness.bend"""
-    r = subprocess.run(["/tmp/vm_ssh.sh", cmd], capture_output=True, text=True)
+    input_file = Path("/tmp/input_f2.json")
+    input_file.write_text("281474976710656")
+    env = {**os.environ, "JSON_IN": str(input_file)}
+    r = subprocess.run(["bend", "tests/harness.bend"], cwd=str(REPO_DIR), env=env, capture_output=True, text=True)
     lines = r.stdout.splitlines()
     # Must exit 0 and report FAIL: number too large
     if r.returncode != 0:

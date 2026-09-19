@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import sys
+import os
 import subprocess
-import json
 from pathlib import Path
 
 REPO_DIR = Path(__file__).resolve().parent.parent
@@ -9,8 +9,10 @@ REPO_DIR = Path(__file__).resolve().parent.parent
 def main():
     # Test array of 1001 ones
     arr_json = "[" + ",".join(["1"] * 1001) + "]"
-    cmd = f"""cat << 'EOF' > /tmp/input_f1.json\n{arr_json}\nEOF\ncd /root/bend && JSON_IN=/tmp/input_f1.json bend tests/harness.bend"""
-    r = subprocess.run(["/tmp/vm_ssh.sh", cmd], capture_output=True, text=True)
+    input_file = Path("/tmp/input_f1.json")
+    input_file.write_text(arr_json)
+    env = {**os.environ, "JSON_IN": str(input_file)}
+    r = subprocess.run(["bend", "tests/harness.bend"], cwd=str(REPO_DIR), env=env, capture_output=True, text=True)
     lines = r.stdout.splitlines()
     if not lines or lines[0] != "OK":
         print("FAIL: parse failed")

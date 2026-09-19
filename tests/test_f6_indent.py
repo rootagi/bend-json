@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 import sys
 import subprocess
+import os
+from pathlib import Path
+
+REPO_DIR = Path(__file__).resolve().parent.parent
 
 def main():
     # depth 15 with step 2: must have 30 leading spaces
     nested = '{"a":' * 15 + '1' + '}' * 15
-    cmd = f"""cat << 'EOF' > /tmp/input_f6.json\n{nested}\nEOF\ncd /root/bend && JSON_IN=/tmp/input_f6.json bend tests/harness.bend"""
-    r = subprocess.run(["/tmp/vm_ssh.sh", cmd], capture_output=True, text=True)
+    input_file = Path("/tmp/input_f6.json")
+    input_file.write_text(nested)
+    env = {**os.environ, "JSON_IN": str(input_file)}
+    r = subprocess.run(["bend", "tests/harness.bend"], cwd=str(REPO_DIR), env=env, capture_output=True, text=True)
     lines = r.stdout.splitlines()
     if "--- PRETTY ---" not in lines:
         print("FAIL: no pretty output")

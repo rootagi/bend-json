@@ -8,28 +8,16 @@ from pathlib import Path
 
 REPO_DIR = Path(__file__).resolve().parent.parent
 
-def run_ssh(cmd, timeout=120):
-    return subprocess.run(
-        ["/tmp/vm_ssh.sh", cmd],
-        capture_output=True,
-        text=True,
-        timeout=timeout
-    )
-
-def sync():
-    subprocess.run([str(REPO_DIR / "tools" / "sync.sh")], check=True)
-
 def run_harness(json_str, ptr=None, timeout=60):
-    # Write to a temp file in VM
-    escaped_json = json_str.replace("'", "'\"'\"'")
-    setup_cmd = f"cat << 'EOF_JSON' > /tmp/input.json\n{json_str}\nEOF_JSON\n"
-    run_cmd = f"cd /root/bend && JSON_IN=/tmp/input.json "
+    tmp_file = Path("/tmp/input_harness.json")
+    tmp_file.write_text(json_str)
+    env = {**os.environ, "JSON_IN": str(tmp_file)}
     if ptr is not None:
-        run_cmd += f"JSON_PTR='{ptr}' bend tests/test_pointer.bend"
+        env["JSON_PTR"] = ptr
+        cmd = ["bend", "tests/test_pointer.bend"]
     else:
-        run_cmd += f"bend tests/harness.bend"
-    full_cmd = setup_cmd + run_cmd
-    return run_ssh(full_cmd, timeout=timeout)
+        cmd = ["bend", "tests/harness.bend"]
+    return subprocess.run(cmd, cwd=str(REPO_DIR), env=env, capture_output=True, text=True, timeout=timeout)
 
 def test_f1():
     print("=== Testing F1: Fuel limit in stringify/pretty ===")
@@ -248,7 +236,6 @@ def test_f7():
     return status
 
 def main():
-    sync()
     findings = {}
     findings["F1"] = test_f1()
     findings["F2"] = test_f2()
