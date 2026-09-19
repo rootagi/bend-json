@@ -1,6 +1,6 @@
 # bend-json
 
-A production-grade, reusable JSON library for **Bend 2** featuring formal invariant verification, RFC 6901 JSON Pointer navigation, array combinators, typed extractors, configurable indentation, and streaming NDJSON.
+A  reusable JSON library for **Bend 2** featuring formal invariant verification, RFC 6901 JSON Pointer navigation, array combinators, typed extractors, configurable indentation, and streaming NDJSON.
 
 > **Note on Verification & AI Development:**  
 > This library was primarily developed with AI assistance (using advanced language models), following Bend’s intended workflow of AI-generated code verified by formal proofs.  
