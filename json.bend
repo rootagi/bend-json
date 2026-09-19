@@ -40,15 +40,25 @@ type Frame is Data:
 type StrCharKind is Data:
   SCQuote{}
   SCSlash{}
+  SCControl{}
   SCOther{}
 
 type StrRes is Data:
   SErr{msg: String}
   SOk{val: String, rest: String}
 
+type Hex4Res is Data:
+  H4Ok{val: U32, rest: String}
+  H4Err{msg: String}
+
+type EscRes is Data:
+  EscChar{c: Char, rest: String}
+  EscErr{msg: String}
+
 type StrState is Data:
   StrNormal{}
   StrEscaping{}
+  StrEscCheck{res: EscRes}
   StrChar{kind: StrCharKind, c: U32}
 
 type PtrUnescState is Data:
@@ -994,15 +1004,24 @@ def pointer_set(j: Json, path: String, val: Json) -> Json:
 # 9. String Escaping & Serialization (stringify)
 # ==============================================================================
 
+def hex_to_char(+d: U32) -> Char:
+  Bool.pick(Char, U32.is_lt(d, 10),
+    {Chr{U32.add(d, 48)} : Char},
+    {Chr{U32.add(U32.sub(d, 10), 97)} : Char})
+
 def escape_char(+c: Char) -> String:
   match c:
     case Chr{+code}:
       Bool.pick(String, U32.is_eq(code, 34), "\\\"",
         Bool.pick(String, U32.is_eq(code, 92), "\\\\",
-          Bool.pick(String, U32.is_eq(code, 10), "\\n",
-            Bool.pick(String, U32.is_eq(code, 9), "\\t",
-              Bool.pick(String, U32.is_eq(code, 13), "\\r",
-                Char.show(Chr{code}))))))
+          Bool.pick(String, U32.is_eq(code, 8), "\\b",
+            Bool.pick(String, U32.is_eq(code, 12), "\\f",
+              Bool.pick(String, U32.is_eq(code, 10), "\\n",
+                Bool.pick(String, U32.is_eq(code, 13), "\\r",
+                  Bool.pick(String, U32.is_eq(code, 9), "\\t",
+                    Bool.pick(String, U32.is_lt(code, 32),
+                      String.from_list([{Chr{92}:Char}, {Chr{117}:Char}, {Chr{48}:Char}, {Chr{48}:Char}, hex_to_char(U32.div(code, 16)), hex_to_char(U32.mod(code, 16))]),
+                      Char.show(Chr{code})))))))))
 
 def escape_string(s: String) -> String:
   match s:
@@ -1222,7 +1241,8 @@ def pretty(j: Json) -> String:
 def classify_str_char(+c: U32) -> StrCharKind:
   Bool.pick(StrCharKind, U32.is_eq(c, 34), SCQuote{},
     Bool.pick(StrCharKind, U32.is_eq(c, 92), SCSlash{},
-      SCOther{}))
+      Bool.pick(StrCharKind, U32.is_lt(c, 32), SCControl{},
+        SCOther{})))
 
 def classify_char(+c: U32) -> CharKind:
   Bool.pick(CharKind, U32.is_eq(c, 91), KindLBracket{},
@@ -1239,13 +1259,115 @@ def classify_char(+c: U32) -> CharKind:
                         Bool.pick(CharKind, Bool.and(U32.is_ge(c, 48), U32.is_le(c, 57)), KindDigit{},
                           KindOther{}))))))))))))
 
-def parse_esc(+code: U32) -> Char:
-  Bool.pick(Char, U32.is_eq(code, 110), Chr{10},
-    Bool.pick(Char, U32.is_eq(code, 116), Chr{9},
-      Bool.pick(Char, U32.is_eq(code, 114), Chr{13},
-        Bool.pick(Char, U32.is_eq(code, 34), Chr{34},
-          Bool.pick(Char, U32.is_eq(code, 92), Chr{92},
-            Chr{code})))))
+def hex_digit_val(+c: U32) -> U32:
+  Bool.pick(U32, Bool.and(U32.is_ge(c, 48), U32.is_le(c, 57)), U32.sub(c, 48),
+    Bool.pick(U32, Bool.and(U32.is_ge(c, 97), U32.is_le(c, 102)), U32.add(U32.sub(c, 97), 10),
+      Bool.pick(U32, Bool.and(U32.is_ge(c, 65), U32.is_le(c, 70)), U32.add(U32.sub(c, 65), 10),
+        255)))
+
+def make_hex4(+d1: U32, +d2: U32, +d3: U32, +d4: U32, rest: String) -> Hex4Res:
+  valid = Bool.and(U32.is_lt(d1, 16), Bool.and(U32.is_lt(d2, 16), Bool.and(U32.is_lt(d3, 16), U32.is_lt(d4, 16))))
+  Bool.pick(Hex4Res, valid,
+    H4Ok{U32.add(U32.mul(d1, 4096), U32.add(U32.mul(d2, 256), U32.add(U32.mul(d3, 16), d4))), rest},
+    H4Err{"invalid hex in unicode escape"})
+
+def parse_hex4(s: String) -> Hex4Res:
+  match s:
+    case SNil{}:
+      H4Err{"incomplete unicode escape"}
+    case SCon{Chr{+c1}, +t1}:
+      match t1:
+        case SNil{}:
+          H4Err{"incomplete unicode escape"}
+        case SCon{Chr{+c2}, +t2}:
+          match t2:
+            case SNil{}:
+              H4Err{"incomplete unicode escape"}
+            case SCon{Chr{+c3}, +t3}:
+              match t3:
+                case SNil{}:
+                  H4Err{"incomplete unicode escape"}
+                case SCon{Chr{+c4}, +rest}:
+                  make_hex4(hex_digit_val(c1), hex_digit_val(c2), hex_digit_val(c3), hex_digit_val(c4), rest)
+
+def finish_low_hex4(is_valid_lo: Bool, +hi_val: U32, +lo_val: U32, rest: String) -> EscRes:
+  match is_valid_lo:
+    case True{}:
+      scalar = U32.add(65536, U32.add(U32.mul(U32.sub(hi_val, 55296), 1024), U32.sub(lo_val, 56320)))
+      EscChar{{Chr{scalar} : Char}, rest}
+    case False{}:
+      EscErr{"lone surrogate"}
+
+def handle_low_hex4(+hi_val: U32, h4: Hex4Res) -> EscRes:
+  match h4:
+    case H4Err{_}:
+      EscErr{"lone surrogate"}
+    case H4Ok{+lo_val, rest}:
+      is_valid_lo = Bool.and(U32.is_ge(lo_val, 56320), U32.is_le(lo_val, 57343))
+      finish_low_hex4(is_valid_lo, hi_val, lo_val, rest)
+
+def check_slash_u(is_slash_u: Bool, +hi_val: U32, t2: String) -> EscRes:
+  match is_slash_u:
+    case True{}:
+      handle_low_hex4(hi_val, parse_hex4(t2))
+    case False{}:
+      EscErr{"lone surrogate"}
+
+def parse_low_surrogate(+hi_val: U32, rest: String) -> EscRes:
+  match rest:
+    case SNil{}:
+      EscErr{"lone surrogate"}
+    case SCon{Chr{+c1}, +t1}:
+      match t1:
+        case SNil{}:
+          EscErr{"lone surrogate"}
+        case SCon{Chr{+c2}, +t2}:
+          is_slash_u = Bool.and(U32.is_eq(c1, 92), U32.is_eq(c2, 117))
+          check_slash_u(is_slash_u, hi_val, t2)
+
+def check_surrogate_hi(is_hi: Bool, +val: U32, rest: String) -> EscRes:
+  match is_hi:
+    case True{}:
+      parse_low_surrogate(val, rest)
+    case False{}:
+      EscChar{{Chr{val} : Char}, rest}
+
+def check_surrogate_kind(is_hi: Bool, is_lo: Bool, +val: U32, rest: String) -> EscRes:
+  match is_lo:
+    case True{}:
+      EscErr{"lone surrogate"}
+    case False{}:
+      check_surrogate_hi(is_hi, val, rest)
+
+def check_surrogate(+val: U32, rest: String) -> EscRes:
+  is_hi = Bool.and(U32.is_ge(val, 55296), U32.is_le(val, 56319))
+  is_lo = Bool.and(U32.is_ge(val, 56320), U32.is_le(val, 57343))
+  check_surrogate_kind(is_hi, is_lo, val, rest)
+
+def handle_unicode_hex4(h4: Hex4Res) -> EscRes:
+  match h4:
+    case H4Err{msg}:
+      EscErr{msg}
+    case H4Ok{val, rest}:
+      check_surrogate(val, rest)
+
+def parse_escape_step(is_u: Bool, +c: U32, +rest: String) -> EscRes:
+  match is_u:
+    case True{}:
+      handle_unicode_hex4(parse_hex4(rest))
+    case False{}:
+      Bool.pick(EscRes, U32.is_eq(c, 34), EscChar{Chr{34}, rest},
+        Bool.pick(EscRes, U32.is_eq(c, 92), EscChar{Chr{92}, rest},
+          Bool.pick(EscRes, U32.is_eq(c, 47), EscChar{Chr{47}, rest},
+            Bool.pick(EscRes, U32.is_eq(c, 98), EscChar{Chr{8}, rest},
+              Bool.pick(EscRes, U32.is_eq(c, 102), EscChar{Chr{12}, rest},
+                Bool.pick(EscRes, U32.is_eq(c, 110), EscChar{Chr{10}, rest},
+                  Bool.pick(EscRes, U32.is_eq(c, 114), EscChar{Chr{13}, rest},
+                    Bool.pick(EscRes, U32.is_eq(c, 116), EscChar{Chr{9}, rest},
+                      EscErr{"invalid escape sequence"}))))))))
+
+def parse_escape_seq(+c: U32, rest: String) -> EscRes:
+  parse_escape_step(U32.is_eq(c, 117), c, rest)
 
 def parse_str.loop(fuel: Nat, st: StrState, s: String, +acc: List<&2, Char>) -> StrRes:
   match fuel:
@@ -1260,21 +1382,30 @@ def parse_str.loop(fuel: Nat, st: StrState, s: String, +acc: List<&2, Char>) -> 
             case SCon{Chr{+c}, +t}:
               parse_str.loop(p, StrChar{classify_str_char(c), c}, t, acc)
 
-        case StrEscaping{}:
-          match s:
-            case SNil{}:
-              SErr{"unterminated string escape"}
-            case SCon{Chr{+c}, +t}:
-              parse_str.loop(p, StrNormal{}, t, parse_esc(c) <> acc)
-
         case StrChar{kind, c}:
           match kind:
             case SCQuote{}:
               SOk{String.from_list(List.reverse(&2, Char, acc)), s}
             case SCSlash{}:
               parse_str.loop(p, StrEscaping{}, s, acc)
+            case SCControl{}:
+              SErr{"unescaped control character in string"}
             case SCOther{}:
               parse_str.loop(p, StrNormal{}, s, Chr{c} <> acc)
+
+        case StrEscaping{}:
+          match s:
+            case SNil{}:
+              SErr{"unterminated string escape"}
+            case SCon{Chr{+c}, +t}:
+              parse_str.loop(p, StrEscCheck{parse_escape_seq(c, t)}, "", acc)
+
+        case StrEscCheck{res}:
+          match res:
+            case EscChar{c_val, rest}:
+              parse_str.loop(p, StrNormal{}, rest, c_val <> acc)
+            case EscErr{msg}:
+              SErr{msg}
 
 def skip_ws(s: String) -> String:
   String.trim_start(s)
