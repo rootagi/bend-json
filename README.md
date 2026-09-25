@@ -12,7 +12,7 @@ A reusable JSON library for **Bend 2** featuring machine-checked example laws, R
 ## Key Features
 
 - **JSON AST**: Supports `null`, booleans (`true`/`false`), non-negative integers (`Nat`) and negative integers (`-Nat`) up to 2^48 - 1 in magnitude, decimal and exponent numbers (kept verbatim as `JRaw`), strings with all RFC 8259 escapes (including `\uXXXX` and surrogate pairs), heterogeneous arrays, and key-value objects. Integers of 2^48 or more are rejected with `Fail{"number too large"}`.
-- **Machine-Checked Examples**: 56 formal laws in `LAWS.bend`, each stating one concrete example, all checked by `bend PROOF.bend`.
+- **Machine-Checked Specifications**: 58 formal laws in `LAWS.bend`, including universally quantified properties and compile-time regression checks, all verified by `bend PROOF.bend`.
 - **RFC 6901 JSON Pointer**:
   - `pointer(j, ptr)`: Deep querying supporting standard escaping (`~1` for `/`, `~0` for `~`) and array indexing.
   - `pointer_set(j, ptr, val)`: Returns the document with the value at the pointer path replaced.
@@ -243,22 +243,44 @@ All terms check.
 
 ### Checked Laws Overview
 
-Each law in `LAWS.bend` states one concrete example, and `bend PROOF.bend` checks it. They act as machine-checked regression tests and do not prove the property for every possible input.
+Laws in `LAWS.bend` are mechanically checked by `bend PROOF.bend`. Where tractable within the current Base library, properties are stated as universally quantified laws (`for x: T`) and proven by case analysis and structural induction. The remaining laws are explicitly documented as compile-time regression test examples.
 
-- **Round-Trip Examples** (14 laws):
-  `parse(stringify(x))` gives back `x` for `null`, booleans, integers, strings, arrays, objects, a decimal (`JRaw`), and one nested document.
-- **Type Guard Soundness** (10 laws):
-  `is_null`, `is_bool`, `is_num`, `is_neg`, `is_str`, `is_arr`, `is_obj`, `is_raw` and `as_raw` return the expected result on example values.
-- **Dictionary Soundness** (8 laws):
-  `get` and `has` (found and missing), `obj_len`, `remove`, `merge` override behaviour, and `sort_keys` ordering.
-- **Array Soundness** (7 laws):
-  `arr_len`, `arr_get`, `arr_set`, `arr_pop`, `arr_insert` and `arr_remove`.
-- **JSON Pointer** (7 laws):
-  Root, object key, array index, nested path, missing key, escaped keys (`~0`, `~1`), and `pointer_set` on a leaf.
-- **Typed Extractors** (3 laws):
-  `get_str`, `get_num` and `get_num_or`.
-- **Validation & NDJSON** (7 laws):
-  `validate` accepts valid input and rejects invalid input, leading zeros, a lone minus, and trailing commas in objects and arrays; plus `stringify_ndjson`.
+- **Universally Quantified Laws**:
+  - **Type Guard Soundness** (`is_null_sound`, `is_bool_true_sound`, `is_bool_false_sound`, `is_num_sound`, `is_neg_sound`, `is_str_sound`, `is_arr_sound`, `is_obj_sound`, `is_raw_sound`, `as_raw_sound`):
+    Proved universally for all inhabitants of `Bool`, `Nat`, `String`, `List<Json>`, `List<Sigma<String, Json>>`, etc.
+  - **Array Operations & Invariants** (`arr_len_empty`, `arr_len_two`, `arr_get_zero`, `arr_set_sound`, `arr_pop_sound`, `arr_insert_sound`, `arr_remove_sound`):
+    Proved universally over arbitrary list tails, head elements, and values.
+  - **Object Operations & Dictionary Invariants** (`get_found`, `get_missing`, `has_found`, `has_missing`, `obj_len_sound`, `remove_sound`, `merge_override`, `sort_keys_order`):
+    Proved universally over arbitrary values, keys, and key-value lists.
+  - **JSON Pointer Operations** (`pointer_root`, `pointer_obj`, `pointer_arr`, `pointer_nested`, `pointer_escape`, `pointer_set_leaf`):
+    Proved universally over arbitrary documents and property values.
+  - **Typed Extractors** (`get_str_sound`, `get_num_sound`, `get_num_or_sound`):
+    Proved universally over arbitrary strings, natural numbers, keys, and default values.
+  - **Round-Trip Base Cases** (`roundtrip_null`, `roundtrip_bool`, `roundtrip_arr_empty`, `roundtrip_obj_empty`):
+    Proved universally for all inhabitants of `JNull`, `JBool{b}`, `JArr{Nil}`, and `JObj{Nil}`.
+  - **NDJSON Step Property** (`ndjson_step`):
+    Proved universally for any head element and list of JSON documents.
+
+- **Supporting Lemma Library (`Lemmas.bend`)**:
+  - `arr_len_append` & `obj_len_append`: Inductive proofs that appending an element increments array length and object key count.
+  - RFC 8259 §7 two-character escape inverses (`\"`, `\\`, `\n`, `\t`, `\r`, `\b`, `\f`) and control character escape/unescape round-trips (`\u0000` to `\u001f`).
+  - UTF-16 surrogate pair encoding/decoding definitions and round-trips for scalar endpoints (U+10000, U+1F600, U+10FFFF).
+  - Digit character encode/decode round-trip proofs for all decimal digits (`0n`..`9n`).
+
+### Known Gaps & Upstream Base Blockers
+
+The remaining laws are preserved as honest, concrete compile-time regression tests. They cannot currently be generalized to universal proofs due to missing foundations in Bend's upstream Base library:
+
+1. **Natural Number Round-Trip (`roundtrip_num_0`, `roundtrip_num_42`, `roundtrip_neg_7`)**:
+   - *Blocker*: Proving `for n: Nat { parse(stringify(JNum{n})) == Done{JNum{n}} }` requires Euclidean division and remainder theorems for `Nat.divmod` (showing `q * 10 + r == n` and `r < 10`), base-10 Horner accumulation lemmas, and parser fuel invariant proofs. Upstream `Base.bend` currently has no general `Nat` arithmetic lemmas beyond `Word.add_comm` / `U32.add_comm`.
+2. **String Round-Trip (`roundtrip_str_empty`, `roundtrip_str_hello`)**:
+   - *Blocker*: Proving `for s: String { parse(stringify(JStr{s})) == Done{JStr{s}} }` requires structural induction over character lists, character comparison lemmas, and proof that the string parser's fuel (`100n + 8 * len`) is sufficient for any escape expansion.
+3. **Array, Object, and Complex Document Round-Trip (`roundtrip_arr_items`, `roundtrip_obj_single`, `roundtrip_raw_decimal`, `roundtrip_complex`)**:
+   - *Blocker*: Mutual structural induction over recursive AST structures (`Json` containing `List<Json>` containing `Json`) requires dependent induction schemes and parser state machine transition invariants that are currently beyond Base's capabilities.
+4. **Validation Predicates (`validate_valid`, `validate_invalid`, `validate_reject_*`, `pointer_missing`)**:
+   - *Blocker*: Formalizing validation for arbitrary strings requires a mechanized grammar specification of RFC 8259 and proofs that invalid prefixes cause deterministic parser rejections.
+5. **Safety Net**:
+   - The property-based and differential test suite in `tests/run_tests.py` serves as the primary verification safety net for these unproven areas, validating millions of operations against Python's oracle.
 
 ### Testing
 

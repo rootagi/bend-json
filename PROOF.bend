@@ -1,10 +1,12 @@
 # PROOF.bend: Formal machine proofs for all laws defined in LAWS.bend.
 # In Bend 2, definitional equalities normalize at compile time and are
-# verified by the proof term {==}.
+# verified by the proof term {==}. Universally quantified laws over inductive
+# types use pattern matching and case analysis.
 
 import Base
 import ./json.bend as Json
 import ./LAWS.bend as Laws
+import ./Lemmas.bend as Lemmas
 
 # ==============================================================================
 # 1. Proofs of Round-Trip Laws
@@ -18,6 +20,13 @@ def Laws.roundtrip_true():
 
 def Laws.roundtrip_false():
   {==}
+
+def Laws.roundtrip_bool(b):
+  match b:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
 
 def Laws.roundtrip_num_0():
   {==}
@@ -59,126 +68,138 @@ def Laws.roundtrip_complex():
 def Laws.is_null_sound():
   {==}
 
-def Laws.is_bool_true_sound():
+def Laws.is_bool_true_sound(b):
+  match b:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+def Laws.is_bool_false_sound(b):
+  match b:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+def Laws.is_num_sound(n):
   {==}
 
-def Laws.is_bool_false_sound():
+def Laws.is_neg_sound(n):
   {==}
 
-def Laws.is_num_sound():
+def Laws.is_str_sound(s):
   {==}
 
-def Laws.is_neg_sound():
+def Laws.is_arr_sound(vals):
   {==}
 
-def Laws.is_str_sound():
+def Laws.is_obj_sound(kvs):
   {==}
 
-def Laws.is_arr_sound():
+def Laws.is_raw_sound(s):
   {==}
 
-def Laws.is_obj_sound():
-  {==}
-
-def Laws.is_raw_sound():
-  {==}
-
-def Laws.as_raw_sound():
+def Laws.as_raw_sound(s):
   {==}
 
 # ==============================================================================
 # 3. Proofs of Query and Accessor Soundness Laws
 # ==============================================================================
 
-def Laws.get_found():
+def Laws.get_found(v):
   {==}
 
-def Laws.get_missing():
+def Laws.get_missing(key):
   {==}
 
-def Laws.has_found():
+def Laws.has_found(v):
   {==}
 
-def Laws.has_missing():
+def Laws.has_missing(key):
   {==}
 
 def Laws.arr_len_empty():
   {==}
 
-def Laws.arr_len_two():
+def Laws.arr_len_two(x, y):
   {==}
 
-def Laws.arr_get_zero():
+def Laws.arr_get_zero(x, xs):
   {==}
 
 # ==============================================================================
 # 4. Proofs of RFC 6901 JSON Pointer Laws
 # ==============================================================================
 
-def Laws.pointer_root():
+def Laws.pointer_root(j):
   {==}
 
-def Laws.pointer_obj():
+def Laws.pointer_obj(v):
   {==}
 
-def Laws.pointer_arr():
+def Laws.pointer_arr(v0, v1):
   {==}
 
-def Laws.pointer_nested():
+def Laws.pointer_nested(v):
   {==}
 
 def Laws.pointer_missing():
   {==}
 
-def Laws.pointer_escape():
+def Laws.pointer_escape(v):
   {==}
 
-def Laws.pointer_set_leaf():
+def Laws.pointer_set_leaf(v):
   {==}
 
 # ==============================================================================
 # 5. Proofs of Object Operations & Dictionary Laws
 # ==============================================================================
 
-def Laws.obj_len_sound():
+def Laws.obj_len_sound(v1, v2):
   {==}
 
-def Laws.remove_sound():
+def Laws.remove_sound(v):
   {==}
 
-def Laws.merge_override():
+def Laws.merge_override(v1, v2):
   {==}
 
-def Laws.sort_keys_order():
+def Laws.sort_keys_order(v1, v2):
   {==}
 
 # ==============================================================================
 # 6. Proofs of Array Operations & Mutation Laws
 # ==============================================================================
 
-def Laws.arr_set_sound():
+def Laws.arr_set_sound(old, val, tail):
   {==}
 
-def Laws.arr_pop_sound():
+def Laws.arr_pop_sound(v1, v2):
   {==}
 
-def Laws.arr_insert_sound():
-  {==}
+def Laws.arr_insert_sound(val, xs):
+  match xs:
+    case Nil{}:
+      {==}
+    case h <> t:
+      {==}
 
-def Laws.arr_remove_sound():
+def Laws.arr_remove_sound(h, t):
   {==}
 
 # ==============================================================================
 # 7. Proofs of Ergonomic Typed Extractors Laws
 # ==============================================================================
 
-def Laws.get_str_sound():
+def Laws.get_str_sound(s):
   {==}
 
-def Laws.get_num_sound():
+def Laws.get_num_sound(n):
   {==}
 
-def Laws.get_num_or_sound():
+def Laws.get_num_or_sound(k, d):
   {==}
 
 # ==============================================================================
@@ -204,4 +225,7 @@ def Laws.validate_reject_arr_trailing_comma():
   {==}
 
 def Laws.ndjson_stringify():
+  {==}
+
+def Laws.ndjson_step(h, t):
   {==}
