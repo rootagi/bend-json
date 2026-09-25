@@ -12,7 +12,7 @@ A reusable JSON library for **Bend 2** featuring machine-checked example laws, R
 ## Key Features
 
 - **JSON AST**: Supports `null`, booleans (`true`/`false`), non-negative integers (`Nat`) and negative integers (`-Nat`) up to 2^48 - 1 in magnitude, decimal and exponent numbers (kept verbatim as `JRaw`), strings with all RFC 8259 escapes (including `\uXXXX` and surrogate pairs), heterogeneous arrays, and key-value objects. Integers of 2^48 or more are rejected with `Fail{"number too large"}`.
-- **Machine-Checked Specifications**: 58 formal laws in `LAWS.bend`, including universally quantified properties and compile-time regression checks, all verified by `bend PROOF.bend`.
+- **Machine-Checked Specifications**: 60 formal laws in `LAWS.bend`, including universally quantified properties and compile-time regression checks, all verified by `bend PROOF.bend`.
 - **RFC 6901 JSON Pointer**:
   - `pointer(j, ptr)`: Deep querying supporting standard escaping (`~1` for `/`, `~0` for `~`) and array indexing.
   - `pointer_set(j, ptr, val)`: Returns the document with the value at the pointer path replaced.
@@ -173,6 +173,7 @@ type Json is Data:
 - `obj(kvs: List<&2, Sigma<&2, &2, String, _ => Json>>) -> Json`: `JObj{kvs}`
 - `kv(key: String, val: Json) -> Sigma<&2, &2, String, _ => Json>`: Key-value tuple
 - `raw(s: String) -> Json`: `JRaw{s}` (decimal or exponent number stored verbatim). The text is not validated, so pass only valid JSON number text such as `1.5` or `2e10`.
+- `raw_checked(s: String) -> Maybe<&2, Json>`: Validating constructor that verifies `s` parses as a standalone JSON number, returning `Some{j}` or `None{}`.
 
 ### Type Guards & Safe Unwrapping
 - `is_null`, `is_bool`, `is_num`, `is_neg`, `is_str`, `is_arr`, `is_obj`, `is_raw`: Returns `Bool`

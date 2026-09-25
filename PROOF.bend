@@ -103,6 +103,12 @@ def Laws.is_raw_sound(s):
 def Laws.as_raw_sound(s):
   {==}
 
+def Laws.raw_checked_invalid():
+  {==}
+
+def Laws.raw_checked_valid():
+  {==}
+
 # ==============================================================================
 # 3. Proofs of Query and Accessor Soundness Laws
 # ==============================================================================

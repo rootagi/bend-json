@@ -1902,6 +1902,27 @@ def validate_step(r: Result<&2, &2, String, Json>) -> Bool:
 def validate(s: String) -> Bool:
   validate_step(parse(s))
 
+def raw_checked_val(j: Json) -> Maybe<&2, Json>:
+  match j:
+    case JRaw{_}:
+      Some{j}
+    case JNum{_}:
+      Some{j}
+    case JNeg{_}:
+      Some{j}
+    case _:
+      None{}
+
+def raw_checked_res(r: Result<&2, &2, String, Json>) -> Maybe<&2, Json>:
+  match r:
+    case Done{j}:
+      raw_checked_val(j)
+    case _:
+      None{}
+
+def raw_checked(s: String) -> Maybe<&2, Json>:
+  raw_checked_res(parse(s))
+
 def stringify_ndjson(xs: List<&2, Json>) -> String:
   match xs:
     case Nil{}:

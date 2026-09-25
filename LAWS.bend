@@ -150,6 +150,14 @@ law as_raw_sound:
   for s: String
   {Json.as_raw(Json.JRaw{s}) == Some{s} : Maybe<&2, String>}
 
+# LAW: raw_checked rejects non-number text
+law raw_checked_invalid:
+  {Json.raw_checked("abc") == None{} : Maybe<&2, Json.Json>}
+
+# LAW: raw_checked parses valid decimal into JRaw
+law raw_checked_valid:
+  {Json.raw_checked("1.5") == Some{Json.JRaw{"1.5"}} : Maybe<&2, Json.Json>}
+
 # ==============================================================================
 # 3. Query and Accessor Soundness Laws (Universally Quantified)
 # ==============================================================================
